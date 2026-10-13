@@ -55,15 +55,23 @@ function validateParent(data, isUpdate = false) {
     return null;
 }
 
-function getParentId(req) {
-    const id = Number(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+function getParentId(req) {
+    const rawId = req.params.id;
+
+    if (!/^[1-9]\d*$/.test(rawId)) {
+        return null;
+    }
+
+    const id = Number(rawId);
+
+    if (!Number.isSafeInteger(id)) {
         return null;
     }
 
     return id;
 }
+
 
 // GET /parents - отримати всіх батьків
 app.get('/parents', (req, res) => {
@@ -214,11 +222,25 @@ app.delete('/parents/:id', (req, res) => {
         });
     }
 
-    db.prepare(
-        'DELETE FROM parents WHERE id = ?'
-    ).run(id);
+
+
+    try {
+        db.prepare(
+            'DELETE FROM parents WHERE id = ?'
+        ).run(id);
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Батько має пов’язані записи'
+            });
+        }
+
+        throw error;
+    }
 
     res.status(204).send();
+
+
 });
 
 
@@ -253,15 +275,74 @@ function validateEmployee(data, isUpdate = false) {
     return null;
 }
 
-function getEmployeeId(req) {
-    const id = Number(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+function getEmployeeId(req) {
+    const rawId = req.params.id;
+
+    if (!/^[1-9]\d*$/.test(rawId)) {
+        return null;
+    }
+
+    const id = Number(rawId);
+
+    if (!Number.isSafeInteger(id)) {
         return null;
     }
 
     return id;
 }
+
+
+function validateEmployeeRelations(id, position) {
+    if (position === 'manager') {
+        const existing = db.prepare(
+            'SELECT id FROM employees WHERE position = ? AND id != ? LIMIT 1'
+        ).get('manager', id ?? 0);
+
+        if (existing) {
+            return 'У садку може бути лише один менеджер';
+        }
+    }
+
+    if (id === null) {
+        return null;
+    }
+
+    const educator = db.prepare(
+        'SELECT id FROM groups WHERE educatorId = ? LIMIT 1'
+    ).get(id);
+
+    if (educator && position !== 'educator') {
+        return 'Працівник закріплений як вихователь групи';
+    }
+
+    const assistant = db.prepare(
+        'SELECT id FROM groups WHERE assistantId = ? LIMIT 1'
+    ).get(id);
+
+    if (assistant && position !== 'assistant') {
+        return 'Працівник закріплений як помічник вихователя';
+    }
+
+    const activity = db.prepare(
+        'SELECT id FROM activities WHERE teacherId = ? LIMIT 1'
+    ).get(id);
+
+    const schedule = db.prepare(
+        'SELECT id FROM schedule_slots WHERE teacherId = ? LIMIT 1'
+    ).get(id);
+
+    const account = db.prepare(
+        'SELECT id FROM users WHERE employeeId = ? AND role = ? LIMIT 1'
+    ).get(id, 'teacher');
+
+    if ((activity || schedule || account) && position !== 'teacher') {
+        return 'Працівник закріплений як викладач';
+    }
+
+    return null;
+}
+
 
 // GET /employees - отримати всіх працівників
 app.get('/employees', (req, res) => {
@@ -304,6 +385,14 @@ app.post('/employees', (req, res) => {
     if (error) {
         return res.status(400).json({ error });
     }
+
+
+    const relationError = validateEmployeeRelations(null, data.position);
+
+    if (relationError) {
+        return res.status(409).json({ error: relationError });
+    }
+
 
     const { fullName, position, salaryRate } = data;
 
@@ -364,6 +453,14 @@ app.patch('/employees/:id', (req, res) => {
         ? data.salaryRate
         : employee.salaryRate;
 
+
+    const relationError = validateEmployeeRelations(id, position);
+
+    if (relationError) {
+        return res.status(409).json({ error: relationError });
+    }
+
+
     db.prepare(`
         UPDATE employees
         SET fullName = ?, position = ?, salaryRate = ?
@@ -417,11 +514,23 @@ app.delete('/employees/:id', (req, res) => {
         });
     }
 
-    db.prepare(
-        'DELETE FROM employees WHERE id = ?'
-    ).run(id);
+
+    try {
+        db.prepare(
+            'DELETE FROM employees WHERE id = ?'
+        ).run(id);
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Працівник має пов’язані записи'
+            });
+        }
+
+        throw error;
+    }
 
     res.status(204).send();
+
 });
 
 
