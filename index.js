@@ -81,6 +81,8 @@ function initializeDatabase() {
             name TEXT NOT NULL UNIQUE,
             ageCategory INTEGER NOT NULL
                 CHECK (ageCategory BETWEEN 2 AND 5),
+            capacity INTEGER NOT NULL DEFAULT 20
+                CHECK (capacity BETWEEN 1 AND 20),
             roomId INTEGER UNIQUE,
             educatorId INTEGER,
             assistantId INTEGER,
@@ -139,6 +141,55 @@ function initializeDatabase() {
             UNIQUE (teacherId, dayOfWeek, startTime),
             UNIQUE (roomId, dayOfWeek, startTime)
         );
+
+        CREATE TRIGGER IF NOT EXISTS check_group_capacity_insert
+        BEFORE INSERT ON children
+        WHEN NEW.groupId IS NOT NULL AND NEW.isActive = 1
+        BEGIN
+        SELECT RAISE(ABORT, 'Group capacity exceeded')
+            WHERE (
+                SELECT COUNT(*)
+                FROM children
+                WHERE groupId = NEW.groupId AND isActive = 1
+            ) >= (
+                SELECT capacity FROM groups WHERE id = NEW.groupId
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS check_group_capacity_update
+        BEFORE UPDATE OF groupId, isActive ON children
+            WHEN NEW.groupId IS NOT NULL
+            AND NEW.isActive = 1
+            AND (
+            OLD.groupId IS NOT NEW.groupId
+            OR OLD.isActive <> NEW.isActive
+            )
+        BEGIN
+        SELECT RAISE(ABORT, 'Group capacity exceeded')
+            WHERE (
+                SELECT COUNT(*)
+                FROM children
+                WHERE groupId = NEW.groupId
+                  AND isActive = 1
+                  AND id <> OLD.id
+            ) >= (
+                SELECT capacity FROM groups WHERE id = NEW.groupId
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS check_group_capacity_change
+        BEFORE UPDATE OF capacity ON groups
+            WHEN NEW.capacity < (
+            SELECT COUNT(*)
+            FROM children
+            WHERE groupId = OLD.id AND isActive = 1
+            )
+        BEGIN
+        SELECT RAISE(
+                       ABORT,
+                       'Group capacity below current enrollment'
+               );
+        END;
     `);
 
     console.log('SQLite tables initialized');
