@@ -1,0 +1,28 @@
+{
+  "name": "sb",
+  "version": "1.0.0",
+  "description": "**Дата оновлення:** 06.10.2026\r ## Склад команди: \r - Угринюк Микола --- Team Lead\r - Сосновець Дмитро --- QA\r - Стасів Владислав --- BA\r - Громов Олександр --- Dev\r - Василинюк Євген --- Dev\r - Яневич Назар --- Dev\r - Харук Олександр --- Dev\r - Вацко Петро --- Dev",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yevhen-vasylyniuk/SB.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/yevhen-vasylyniuk/SB/issues"
+  },
+  "homepage": "https://github.com/yevhen-vasylyniuk/SB#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3"
+  }
+}
