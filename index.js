@@ -21,6 +21,31 @@ const db = new Database('kindergarten.db');
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 
+
+function migrateDatabase() {
+    const columns = db.prepare(`
+        PRAGMA table_info(groups)
+    `).all();
+
+    const hasCapacity = columns.some(
+        column => column.name === 'capacity'
+    );
+
+    if (!hasCapacity) {
+        console.log('Migrating database: adding groups.capacity');
+
+        db.exec(`
+            ALTER TABLE groups
+            ADD COLUMN capacity INTEGER NOT NULL DEFAULT 20
+            CHECK (capacity BETWEEN 1 AND 20);
+        `);
+
+        console.log('Migration completed: groups.capacity added');
+    } else {
+        console.log('Database schema is up to date');
+    }
+}
+
 function initializeDatabase() {
     db.exec(`
         CREATE TABLE IF NOT EXISTS parents (
@@ -141,7 +166,11 @@ function initializeDatabase() {
             UNIQUE (teacherId, dayOfWeek, startTime),
             UNIQUE (roomId, dayOfWeek, startTime)
         );
+    `);
 
+    migrateDatabase();
+
+    db.exec(`
         CREATE TRIGGER IF NOT EXISTS check_group_capacity_insert
         BEFORE INSERT ON children
         WHEN NEW.groupId IS NOT NULL AND NEW.isActive = 1
