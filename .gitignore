@@ -4,3 +4,5 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+# WebStorm / JetBrains
+.idea/
