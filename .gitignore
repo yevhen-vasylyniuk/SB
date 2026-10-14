@@ -6,3 +6,4 @@ node_modules/
 *.db-wal
 # WebStorm / JetBrains
 .idea/
+*.db.backup
