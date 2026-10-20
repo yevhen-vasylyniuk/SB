@@ -79,14 +79,46 @@
 - Функція перевірки перетинів розкладу: група, викладач, кімната (`409`).
 
 ### Вацко Петро — Dev (фінанси)
-- Чисті функції без доступу до БД: `calcTuition`, `calcMeals`, `calcEducatorSalary`, `calcAssistantSalary`.
-- Контрольні значення: пільга 30% і план `yearly` дає 110 880 грн за навчання; прибуток групи з 12 п'ятирічок без пільг на `monthly` дорівнює 86 000 грн.
+- Чисті функції без доступу до БД: `calcTuition`, `calcMeals`, `calcEducatorSalary`, `calcAssistantSalary`. Контракт нижче; **від нього залежить Стасів** (прибуток), тому сигнатури не змінювати без домовленості з ним.
+- Усі суми це цілі гривні без копійок. Константи (15 000, 12%, тарифи харчування, 20 робочих днів, 80 000, 40 000, 50 000) винести в об'єкт `CONFIG` на початку `index.js`. Функції пишуться в блоці «РАХУНКИ» як `function`, щоб інші могли їх викликати.
 - Після merge дітей і груп: `GET /children/:id/invoice`. Рахунок рахується «на льоту», окремих таблиць рахунків і платежів немає.
+
+**Контракт функцій**
+
+| Функція | Приймає | Повертає |
+|---|---|---|
+| `calcTuition(child)` | `child = { discountPercent, paymentPlan }`, де `discountPercent` це 0, 10, 20 або 30, а `paymentPlan` це `'monthly'` або `'yearly'` | `{ perMonth, perYear }` |
+| `calcMeals(age)` | вік 2, 3, 4 або 5 (число). Вік визначає той, хто викликає: `group.ageCategory`, а без групи повний вік за `birthDate` | `{ perDay, perMonth, perYear }` |
+| `calcEducatorSalary(kidsCount)` | кількість **активних** дітей у групі, ціле 0–20 | зарплата вихователя за місяць (число) |
+| `calcAssistantSalary(kidsCount)` | те саме | зарплата помічника за місяць (число) |
+
+Формули:
+- `calcTuition`: `річна база = 180 000 × (100 − discountPercent) / 100`. План `monthly`: `perYear` = ця сума, `perMonth` = `perYear / 12`. План `yearly`: `perYear` = `річна база × 88 / 100`, `perMonth` = `perYear / 12`. Тобто `perMonth` це **місячний еквівалент**, саме він іде в розрахунок прибутку. Результат округлювати `Math.round`.
+- `calcMeals`: `perDay` = 300, 400, 500 або 600 за віком 2, 3, 4, 5; `perMonth` = `perDay × 20`; `perYear` = `perMonth × 12`. Пільги на харчування не діють, у прибуток садка харчування не входить.
+- `calcEducatorSalary`: `2 000 × min(n, 12) + 5 000 × max(0, n − 12)`.
+- `calcAssistantSalary`: `20 000 + 3 000 × max(0, n − 12)`.
+- Некоректний вхід (вік поза 2–5, `kidsCount` поза 0–20, невідомий план чи пільга): `throw new RangeError(...)`. Маршрути перевіряють дані до виклику, тому функція не повертає `NaN` і не мовчить.
+
+Контрольні значення (перевірити перед PR):
+
+| Виклик | Результат |
+|---|---|
+| `calcTuition({ discountPercent: 0, paymentPlan: 'monthly' })` | `{ perMonth: 15000, perYear: 180000 }` |
+| `calcTuition({ discountPercent: 10, paymentPlan: 'yearly' })` | `{ perMonth: 11880, perYear: 142560 }` |
+| `calcTuition({ discountPercent: 30, paymentPlan: 'monthly' })` | `{ perMonth: 10500, perYear: 126000 }` |
+| `calcTuition({ discountPercent: 30, paymentPlan: 'yearly' })` | `{ perMonth: 9240, perYear: 110880 }` |
+| `calcMeals(3)` | `{ perDay: 400, perMonth: 8000, perYear: 96000 }` |
+| `calcEducatorSalary(15)` / `calcEducatorSalary(20)` | 39 000 / 64 000 |
+| `calcAssistantSalary(15)` / `calcAssistantSalary(20)` | 29 000 / 44 000 |
+| прибуток групи: 12 п'ятирічок, без пільг, `monthly` | 86 000 (180 000 − 50 000 − 24 000 − 20 000) |
+
+Підсумок рахунку `GET /children/:id/invoice` (рядки «Навчання», «Харчування», «Підсумок»): `monthly` це `perMonth` навчання + `meals.perMonth`; `yearly` це `perYear` навчання + `meals.perYear`. Для неактивної дитини `409`.
 
 ### Стасів Владислав — Dev (розклад і прибуток)
 - Генератор розкладу як чиста функція за алгоритмом із розділу 5 ТЗ: `activityIndex = (i + d) mod 5`, слоти по 30 хв від 09:30, старші групи першими.
 - `POST /schedules/generate`, `GET /groups/:id/schedule`, `GET /teachers/:id/schedule`, `PATCH /schedules/:id`.
-- Після готових функцій розрахунку: `GET /groups/:id/profit` і `GET /admin/profit`.
+- Після готових функцій розрахунку: `GET /groups/:id/profit` і `GET /admin/profit`. Використовувати `calcTuition(child).perMonth`, `calcEducatorSalary(n)`, `calcAssistantSalary(n)` за контрактом Петра (див. вище); рахувати лише активних дітей (`isActive = 1`).
+- Прибуток групи: `Σ perMonth активних дітей − (50 000 + educator(n) + assistant(n))`. Прибуток садка: `Σ perMonth усіх активних дітей − (SUM(rooms.rent) + 80 000 + 40 000 × кількість teacher + Σ по групах (educator(n) + assistant(n)))`.
 
 ## 5. Порядок злиття
 
