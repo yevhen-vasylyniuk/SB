@@ -947,7 +947,11 @@ app.patch('/schedules/:id', (req, res) => {
     }, slotId);
 
     if (conflict) {
-        return res.status(409).json({ error: 'Колізія розкладу', details: conflict });
+        return res.status(409).json({ 
+            error: 'Колізія розкладу: час вже зайнятий', 
+            type: conflict.type, 
+            slotId: conflict.slotId 
+        });
     }
 
     db.prepare(`
