@@ -914,6 +914,50 @@ app.get('/teachers/:id/schedule', (req, res) => {
     res.status(200).json(schedule);
 });
 
+// --- ТИМЧАСОВА ЗАГЛУШКА (від Громова) ---
+function findScheduleConflict(slot, ignoreId) { return null; }
+// ----------------------------------------
+
+// 4. Оновити слот розкладу (перенести урок)
+app.patch('/schedules/:id', (req, res) => {
+    const slotId = Number(req.params.id);
+    const { startTime, dayOfWeek } = req.body;
+    
+    const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
+    if (!validTimes.includes(startTime) || dayOfWeek < 0 || dayOfWeek > 4) {
+        return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4.' });
+    }
+
+    const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
+    if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
+
+    // TODO: Розкоментувати після додавання авторизації Миколою
+    // if (req.user && req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
+    //     return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
+    // }
+
+    // Перевірка колізій через функцію Громова
+    const conflict = findScheduleConflict({
+        groupId: currentSlot.groupId,
+        teacherId: currentSlot.teacherId,
+        roomId: currentSlot.roomId,
+        dayOfWeek: dayOfWeek,
+        startTime: startTime,
+        durationMin: 30
+    }, slotId);
+
+    if (conflict) {
+        return res.status(409).json({ error: 'Колізія розкладу', details: conflict });
+    }
+
+    db.prepare(`
+        UPDATE schedule_slots 
+        SET startTime = ?, dayOfWeek = ? 
+        WHERE id = ?
+    `).run(startTime, dayOfWeek, slotId);
+    
+    res.status(200).json({ message: 'Слот успішно оновлено' });
+});
 
 // ==========================================
 // 7. ОБРОБКА ПОМИЛОК
