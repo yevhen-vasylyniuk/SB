@@ -6,4 +6,5 @@ node_modules/
 *.db.backup
 
 # WebStorm / JetBrains
-.idea/
+.idea/*.db.*
+*.db*
