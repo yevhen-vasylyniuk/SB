@@ -1,0 +1,1452 @@
+{
+  "info": {
+    "_postman_id": "e74aa11d-d5b0-4721-bd0f-c361873814a7",
+    "name": "Kindergarten API — QA (dev, JWT-ready)",
+    "description": "Колекція для тестування актуальних маршрутів /api/health, /parents, /employees у dev. Основні 28 запитів адаптовано з перевіреної QA-колекції. Додано Login admin і окремі негативні тести 401/403 після інтеграції JWT. Використовуйте environment local із пустими секретними змінними: adminPassword, token, restrictedToken. На поточному index.js авторизації ще немає: поки запускайте папки 01–04; після PR авторизації — спочатку 00, далі 01–05. Тести модифікують локальну тестову БД; DELETE видаляє записи, створені колекцією. Для 403 необхідний токен користувача з роллю parent/teacher у restrictedToken; без нього цей запит пропускається.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "qaParentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaParentName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaEmployeeId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaEmployeeName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaManagerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaManagerExists",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 — Login admin (після інтеграції JWT)",
+      "description": "Поточний index.js не має /auth/login. Запускайте після злиття PR авторизації. Для запуску старого dev без JWT пропускайте цю папку.",
+      "item": [
+        {
+          "name": "Login admin — POST /auth/login → {{token}}",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"{{adminLogin}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/auth/login",
+            "description": "Запускайте ПЕРШИМ після інтеграції PR авторизації. Пароль береться із локального environment, не з колекції. Відповідь JWT зберігається у змінній оточення token."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('token', '');",
+                  "if (!pm.environment.get('adminPassword')) {",
+                  "    console.warn('Заповніть adminPassword у локальному Postman Environment (не експортуйте його у Git).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 — admin login', () => pm.response.to.have.status(200));",
+                  "pm.test('JWT отримано і збережено у {{token}}', () => {",
+                  "    const data = pm.response.json();",
+                  "    const token = data.token || data.accessToken || data.jwt || (data.data && (data.data.token || data.data.accessToken));",
+                  "    pm.expect(token, 'Очікував поле token або accessToken у відповіді').to.be.a('string').and.not.empty;",
+                  "    pm.expect(token.split('.').length, 'JWT повинен містити 3 сегменти').to.eql(3);",
+                  "    pm.environment.set('token', token);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 — Health і глобальні помилки",
+      "description": "GET /api/health, 404, некоректний JSON. Після інтеграції JWT спочатку виконайте 00 — Login admin, щоб зберегти {{token}}.",
+      "item": [
+        {
+          "name": "01 · GET /api/health — SQLite",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/health",
+            "description": "Реальний маршрут із index.js: перевіряє SELECT 1 і повертає status=ok, database=connected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Здоров’я API і SQLite', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('ok');",
+                  "    pm.expect(data.database).to.eql('connected');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "02 · GET /qa-route-does-not-exist — 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/qa-route-does-not-exist",
+            "description": "Глобальний обробник 404 повертає Route not found."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});",
+                  "pm.test('Відповідь глобального 404', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('Route not found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "03 · POST /parents — некоректний JSON → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Спеціально некоректний JSON; повинен спрацювати глобальний обробник Invalid JSON body. Запис не створюється.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});",
+                  "pm.test('JSON parse error', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('Invalid JSON body');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 — Parents (CRUD + негативні)",
+      "description": "Створюємо, перевіряємо, змінюємо і видаляємо тестового батька. Після інтеграції JWT спочатку виконайте 00 — Login admin, щоб зберегти {{token}}.",
+      "item": [
+        {
+          "name": "04 · POST /parents — створити → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Створюємо тимчасовий запис. Зберігаємо ID і ПІБ як змінні колекції.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Parent {{$guid}}\",\n  \"phone\": \"+380991112233\",\n  \"email\": \"qa-parent@example.test\",\n  \"relationNote\": \"Postman QA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('qaParentId');",
+                  "pm.collectionVariables.unset('qaParentName');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Батька створено і є ID', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.id).to.be.a('number').and.greaterThan(0);",
+                  "    pm.expect(d.fullName).to.be.a('string').and.include('QA Parent');",
+                  "    pm.expect(d.phone).to.eql('+380991112233');",
+                  "    pm.collectionVariables.set('qaParentId', String(d.id));",
+                  "    pm.collectionVariables.set('qaParentName', d.fullName);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "05 · GET /parents — список → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Відповідь-масив містить щойно створеного батька."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Список містить тестового батька', () => {",
+                  "    const rows = pm.response.json();",
+                  "    pm.expect(rows).to.be.an('array');",
+                  "    pm.expect(rows.some(r => String(r.id) === pm.collectionVariables.get('qaParentId'))).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "06 · GET /parents/:id — один запис → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaParentId}}",
+            "description": "Читаємо створений запис за ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Повернуто правильного батька', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaParentId'));",
+                  "    pm.expect(d.fullName).to.eql(pm.collectionVariables.get('qaParentName'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "07 · PATCH /parents/:id — оновити телефон → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaParentId}}",
+            "description": "Оновлюємо лише телефон, ПІБ має зберегтися.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+380991112244\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('PATCH змінив лише телефон', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.phone).to.eql('+380991112244');",
+                  "    pm.expect(d.fullName).to.eql(pm.collectionVariables.get('qaParentName'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "08 · POST /parents — немає ПІБ → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Перевірка required fullName.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"0991234567\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "09 · POST /parents — телефон число → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "У полі phone має бути рядок, null або воно може бути відсутнім.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Invalid Phone\",\n  \"phone\": 12345\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "10 · PATCH /parents/:id — порожнє тіло {} → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaParentId}}",
+            "description": "Заборона PATCH без полів.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "11 · GET /parents/abc — некоректний ID → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/abc",
+            "description": "getParentId() відхиляє букви в ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "12 · GET /parents/999999999 — немає ID → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/999999999",
+            "description": "Пошук гарантовано відсутнього в типовій локальній базі запису; якщо такий ID реально існує, змініть тестовий ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "13 · DELETE /parents/:id — прибрати тестові дані → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaParentId}}",
+            "description": "Видаляємо тільки запис, створений запитом №04. ID залишаємо для майбутнього ручного GET/404."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('qaParentId')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('204 без тіла', () => {",
+                  "    pm.expect(pm.response.text()).to.eql('');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 — Employees (CRUD + негативні)",
+      "description": "Створюємо, перевіряємо, змінюємо і видаляємо тестового викладача. Після інтеграції JWT спочатку виконайте 00 — Login admin, щоб зберегти {{token}}.",
+      "item": [
+        {
+          "name": "14 · POST /employees — створити teacher → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Створюємо тестового викладача. Зберігаємо ID.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Employee {{$guid}}\",\n  \"position\": \"teacher\",\n  \"salaryRate\": 40000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('qaEmployeeId');",
+                  "pm.collectionVariables.unset('qaEmployeeName');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Працівник створений', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.id).to.be.a('number').and.greaterThan(0);",
+                  "    pm.expect(d.position).to.eql('teacher');",
+                  "    pm.expect(d.salaryRate).to.eql(40000);",
+                  "    pm.collectionVariables.set('qaEmployeeId', String(d.id));",
+                  "    pm.collectionVariables.set('qaEmployeeName', d.fullName);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "15 · GET /employees — список → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Відповідь містить новоствореного працівника."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('У списку є тестовий викладач', () => {",
+                  "    const rows = pm.response.json();",
+                  "    pm.expect(rows).to.be.an('array');",
+                  "    pm.expect(rows.some(r => String(r.id) === pm.collectionVariables.get('qaEmployeeId'))).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "16 · GET /employees/:id — один → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaEmployeeId}}",
+            "description": "Читаємо працівника за ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('ID і посада збігаються', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaEmployeeId'));",
+                  "    pm.expect(d.position).to.eql('teacher');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "17 · PATCH /employees/:id — змінити зарплату → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaEmployeeId}}",
+            "description": "Оновлюємо тільки salaryRate; посада та ПІБ не повинні змінюватися.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"salaryRate\": 45000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Зарплату оновлено, інші поля без змін', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.salaryRate).to.eql(45000);",
+                  "    pm.expect(d.position).to.eql('teacher');",
+                  "    pm.expect(d.fullName).to.eql(pm.collectionVariables.get('qaEmployeeName'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "18 · POST /employees — неправильна посада → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Недопустима посада director.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Invalid Position\",\n  \"position\": \"director\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "19 · POST /employees — зарплата -100 → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Від’ємна ставка не допускається.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Invalid Salary\",\n  \"position\": \"teacher\",\n  \"salaryRate\": -100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "20 · POST /employees — немає ПІБ → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Поле fullName обов’язкове.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"position\": \"teacher\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "21 · PATCH /employees/:id — порожнє {} → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaEmployeeId}}",
+            "description": "Заборона порожнього PATCH.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "22 · GET /employees/abc — некоректний ID → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/abc",
+            "description": "getEmployeeId() відхиляє букви в ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "23 · GET /employees/999999999 — не існує → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/999999999",
+            "description": "Пошук відсутнього ID; якщо він є в локальній базі, змініть ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "24 · DELETE /employees/:id — очистити → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaEmployeeId}}",
+            "description": "Видалити тільки створений у тесті запис."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('qaEmployeeId')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('204 без тіла', () => pm.expect(pm.response.text()).to.eql(''));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 — Правило одного менеджера",
+      "description": "Безпечно працює і коли менеджер уже є: існуючого не видаляє. Після інтеграції JWT спочатку виконайте 00 — Login admin, щоб зберегти {{token}}.",
+      "item": [
+        {
+          "name": "25 · GET /employees — знайти чинного менеджера",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Підготовка. Запам’ятовуємо, чи є менеджер. Не змінює наявні записи."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('qaManagerId');",
+                  "pm.collectionVariables.unset('qaManagerExists');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Знайдено або не знайдено чинного менеджера', () => {",
+                  "    const rows = pm.response.json();",
+                  "    pm.expect(rows).to.be.an('array');",
+                  "    const hasManager = rows.some(e => e.position === 'manager');",
+                  "    pm.collectionVariables.set('qaManagerExists', hasManager ? 'true' : 'false');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "26 · POST /employees — менеджер → 201 або 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Якщо менеджера не було — створюємо тестового (201). Якщо був — перевіряємо конфлікт (409).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Manager {{$guid}}\",\n  \"position\": \"manager\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус залежить від наявності менеджера', () => {",
+                  "    const existed = pm.collectionVariables.get('qaManagerExists');",
+                  "    pm.expect(['true','false']).to.include(existed);",
+                  "    const status = existed === 'true' ? 409 : 201;",
+                  "    pm.expect(pm.response.code).to.eql(status);",
+                  "    const d = pm.response.json();",
+                  "    if (status === 201) {",
+                  "        pm.expect(d.id).to.be.a('number').and.greaterThan(0);",
+                  "        pm.collectionVariables.set('qaManagerId', String(d.id));",
+                  "    } else {",
+                  "        pm.expect(d.error).to.be.a('string');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "27 · POST /employees — другий менеджер → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Якщо GET/POST виконано перед цим, менеджер у базі точно існує. Другий заборонений.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Duplicate Manager\",\n  \"position\": \"manager\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Помилка має поле error', () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.error).to.be.a('string');",
+                  "    pm.expect(data.error.length).to.be.greaterThan(0);",
+                  "});",
+                  "pm.test('Причина — один менеджер', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('У садку може бути лише один менеджер');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "28 · DELETE /employees/:id — очистити тестового менеджера",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaManagerId}}",
+            "description": "Виконається ЛИШЕ якщо запит 26 створив нового менеджера. Існуючий менеджер не зачіпається."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('qaManagerId')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('Тестового менеджера видалено', () => {",
+                  "    pm.expect(pm.response.text()).to.eql('');",
+                  "    pm.collectionVariables.unset('qaManagerId');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 — Авторизація: негативні 401/403 (після PR JWT)",
+      "description": "Виконувати лише після інтеграції JWT. 401 без/з невалідним токеном і при неправильному паролі; 403 для ролі parent/teacher з окремим тестовим токеном restrictedToken. Якщо restrictedToken порожній — 403 запит буде SKIPPED, а не Passed.",
+      "item": [
+        {
+          "name": "401 — GET /parents без токена",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Після інтеграції JWT має бути відхилено запит без Authorization.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є повідомлення про помилку', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "401 — GET /employees з невалідним токеном",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "Після інтеграції JWT невалідний Bearer має повертати 401.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "invalid-token-for-negative-test",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є повідомлення про помилку', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "401 — POST /auth/login з неправильним паролем",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "description": "Невірні облікові дані адміна мають давати 401, не створює токен.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{adminLogin}}\",\"password\":\"qa-intentionally-incorrect-password\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є повідомлення про помилку', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "403 — GET /employees під роллю parent або teacher",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "description": "У restrictedToken внесіть JWT ролі parent/teacher з тестового акаунта. Якщо його немає, запит пропускається — це НЕ Passed 403.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{restrictedToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('restrictedToken')) {",
+                  "    console.warn('SKIP 403: Заповніть restrictedToken JWT користувача з роллю parent/teacher.');",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є повідомлення про помилку', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

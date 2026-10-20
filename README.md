@@ -212,16 +212,16 @@
 
 ## 8. Модель даних (таблиці SQLite)
 
-| Таблиця | Колонки | Обмеження |
-| --- | --- | --- |
-| `users` | id, login, passwordHash, role, parentId, employeeId | `login` унікальний; `role` одна з `admin`, `manager`, `parent`, `teacher` |
-| `parents` | id, fullName, phone, email, relationNote | `relationNote` довільний рядок («родич адміна», «депутат», «знайомий») |
-| `children` | id, fullName, birthDate, parentId, groupId, discountPercent, paymentPlan, notes, isActive | `discountPercent` у 0, 10, 20, 30; `paymentPlan` у `monthly`, `yearly`; `isActive` за замовчуванням 1 |
-| `groups` | id, name, ageCategory, roomId, educatorId, assistantId | `ageCategory` від 2 до 5; `roomId` унікальний (одна кімната на одну групу) |
-| `rooms` | id, name, type, rent | `type` у `base`, `specialized`; `rent` за замовчуванням 50000 |
-| `employees` | id, fullName, position, salaryRate | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
-| `activities` | id, name, teacherId, roomId | `name` унікальна; `roomId` вказує на спеціалізований зал |
-| `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час) |
+| Таблиця | Колонки                                                                                   | Обмеження                                                                                                                                                                                                                                                                                                                             |
+| --- |-------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `users` | id, login, passwordHash, role, parentId, employeeId                                       | `login` унікальний; `role` одна з `admin`, `manager`, `parent`, `teacher`                                                                                                                                                                                                                                                             |
+| `parents` | id, fullName, phone, email, relationNote                                                  | `relationNote` довільний рядок («родич адміна», «депутат», «знайомий»)                                                                                                                                                                                                                                                                |
+| `children` | id, fullName, birthDate, parentId, groupId, discountPercent, paymentPlan, notes, isActive | `discountPercent` у 0, 10, 20, 30; `paymentPlan` у `monthly`, `yearly`; `isActive` за замовчуванням 1                                                                                                                                                                                                                                 |
+| `groups` | id, name, ageCategory, capacity, roomId, educatorId, assistantId                          | `ageCategory` від 2 до 5; `roomId` унікальний (одна кімната на одну групу); `capacity` від 1 до 20, за замовчуванням 20                                                                                                                                                                                                               |
+| `rooms` | id, name, type, rent                                                                      | `type` у `base`, `specialized`; `rent` за замовчуванням 50000                                                                                                                                                                                                                                                                         |
+| `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
+| `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                              |
+| `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                              |
 
 Оренда для розрахунку: `SUM(rent)` по таблиці `rooms`. Поки значення не змінювали, вона дорівнює 50 000 × кількість кімнат.
 
@@ -318,6 +318,93 @@
 3. Створити файл `.env` або задати змінні середовища: `PORT=3000`, `JWT_SECRET=<довільний довгий рядок>`, `ADMIN_PASSWORD=<пароль адміна для seed>`. Секрети не комітити в репозиторій.
 4. Запустити: `node index.js`. При першому старті створюються `kindergarten.db`, таблиці й початкові дані.
 
+### Налаштування локального середовища (.env)
+
+Для запуску проєкту кожен учасник команди повинен налаштувати власні змінні середовища.
+
+**1. Встановлення залежностей**
+
+У терміналі WebStorm, перебуваючи в кореневій папці проєкту, виконайте:
+
+```bash
+npm ci
+```
+
+**2. Створення файлу `.env`**
+
+У кореневій папці проєкту, поряд з `index.js` і `package.json`, створіть файл `.env`.
+
+Додайте до нього:
+
+```dotenv
+PORT=3000
+ADMIN_PASSWORD=your_generated_password
+JWT_SECRET=your_generated_secret
+```
+
+Значення `ADMIN_PASSWORD` та `JWT_SECRET` потрібно замінити власними випадково згенерованими значеннями.
+
+**3. Генерація пароля адміністратора**
+
+Виконайте:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(18).toString('hex'))"
+```
+
+Команда згенерує випадковий пароль із 36 символів. Скопіюйте його у `ADMIN_PASSWORD`.
+
+Пароль повинен містити щонайменше 12 символів.
+
+**4. Генерація JWT_SECRET**
+
+Виконайте:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Команда згенерує випадковий секретний ключ. Вставте його у `JWT_SECRET`.
+
+Значення `JWT_SECRET` повинно містити щонайменше 32 символи.
+
+**5. Запуск проєкту**
+
+```bash
+npm run dev
+```
+
+Під час першого запуску автоматично створюються:
+- Локальна SQLite-база `kindergarten.db`.
+- Вісім таблиць бази даних.
+- Користувач `admin` із хешованим паролем.
+- П'ять початкових дисциплін.
+
+**6. Перевірка працездатності**
+
+Відкрийте в браузері:
+
+`http://localhost:3000/api/health`
+
+Очікувана відповідь:
+
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "message": "Kindergarten API працює"
+}
+```
+
+**Важливо:**
+
+- Файл `.env` не завантажується на GitHub, оскільки він доданий до `.gitignore`.
+- Кожен розробник використовує власні паролі та локальну базу даних.
+- Не передавайте `ADMIN_PASSWORD` та `JWT_SECRET` іншим учасникам.
+- Зміна `ADMIN_PASSWORD` у `.env` не змінює пароль уже створеного адміністратора.
+- Для повторного створення тестової бази можна зупинити сервер, видалити `kindergarten.db` і запустити його знову. Усі локальні записи при цьому будуть втрачені.
+- Функціонал входу через `POST /auth/login` стане доступним після реалізації модуля авторизації.
+
 ### Перший тест
 1. Вхід: `POST /auth/login` з тілом `{ "login": "admin", "password": "<ADMIN_PASSWORD>" }`, у відповіді токен.
 2. Усі інші запити з заголовком `Authorization: Bearer <токен>`.
@@ -332,3 +419,13 @@
 - Перевіряють роль, але не перевіряють, чия це дитина чи слот.
 - Пишуть одну величезну функцію на весь ендпойнт замість маленьких окремих.
 - Пушать у `dev` не перевірене QA.
+## Актуальний розподіл ролей команди (14.10.2026)
+
+- Дмитро Сосновець --- Team Lead
+- Микола Угринюк --- Dev
+- Олександр Громов --- Dev
+- Петро Вацко --- Dev
+- Назар Яневич --- QA
+- Євген Василинюк --- BA
+- Владислав Стасів --- Dev
+- Саша --- Dev

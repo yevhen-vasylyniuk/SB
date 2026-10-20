@@ -1,10 +1,12 @@
 {
   "name": "sb",
   "version": "1.0.0",
-  "description": "**Дата оновлення:** 06.10.2026\r ## Склад команди: \r - Угринюк Микола --- Team Lead\r - Сосновець Дмитро --- QA\r - Стасів Владислав --- BA\r - Громов Олександр --- Dev\r - Василинюк Євген --- Dev\r - Яневич Назар --- Dev\r - Харук Олександр --- Dev\r - Вацко Петро --- Dev",
+  "description": "REST API for private kindergarten",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
   "repository": {
     "type": "git",
