@@ -283,8 +283,288 @@ seedDatabase();
 // 2. АВТОРИЗАЦІЯ
 // ==========================================
 
-// Тут будуть реєстрація, вхід і JWT.
+const JWT_SECRET = process.env.JWT_SECRET;
 
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    throw new Error('Set JWT_SECRET (at least 32 characters) in .env');
+}
+
+app.post('/auth/login', (req, res) => {
+    const { login, password } = req.body || {};
+
+    if (
+        typeof login !== 'string' ||
+        !login.trim() ||
+        typeof password !== 'string' ||
+        !password
+    ) {
+        return res.status(400).json({
+            error: 'Вкажіть логін і пароль'
+        });
+    }
+
+    const user = db.prepare(`
+        SELECT id, login, passwordHash, role
+        FROM users
+        WHERE login = ?
+    `).get(login.trim());
+
+    if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
+        return res.status(401).json({
+            error: 'Невірний логін або пароль'
+        });
+    }
+
+    const token = jwt.sign(
+        {
+            userId: user.id,
+            role: user.role
+        },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+    );
+
+    return res.status(200).json({
+        token,
+        tokenType: 'Bearer',
+        expiresIn: 28800,
+        user: {
+            id: user.id,
+            login: user.login,
+            role: user.role
+        }
+    });
+});
+
+function authenticate(req, res, next) {
+    const authHeader = req.headers.authorization;
+
+    if (typeof authHeader !== 'string') {
+        return res.status(401).json({
+            error: 'Потрібна авторизація'
+        });
+    }
+
+    const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
+
+    if (!match) {
+        return res.status(401).json({
+            error: 'Невірний формат токена'
+        });
+    }
+
+    try {
+        const decoded = jwt.verify(match[1], JWT_SECRET, {
+            algorithms: ['HS256']
+        });
+
+        if (
+            !decoded ||
+            !Number.isInteger(decoded.userId) ||
+            !['admin', 'manager', 'parent', 'teacher'].includes(decoded.role)
+        ) {
+            return res.status(401).json({
+                error: 'Недійсний токен'
+            });
+        }
+
+        const user = db.prepare(`
+            SELECT id, login, role, parentId, employeeId
+            FROM users
+            WHERE id = ?
+        `).get(decoded.userId);
+
+        if (!user || user.role !== decoded.role) {
+            return res.status(401).json({
+                error: 'Користувача не знайдено або роль змінена'
+            });
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        return res.status(401).json({
+            error: 'Недійсний або прострочений токен'
+        });
+    }
+}
+
+function requireRole(...allowedRoles) {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({
+                error: 'Потрібна авторизація'
+            });
+        }
+
+        if (!allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({
+                error: 'Недостатньо прав доступу'
+            });
+        }
+
+        next();
+    };
+}
+
+app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const data = req.body;
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return res.status(400).json({
+            error: 'Некоректні дані користувача'
+        });
+    }
+
+    const { login, password, role, parentId, employeeId } = data;
+    const allowedRoles = ['admin', 'manager', 'parent', 'teacher'];
+
+    // Перевірка дозволених полів
+    const allowedFields = ['login', 'password', 'role', 'parentId', 'employeeId'];
+
+    if (Object.keys(data).some(field => !allowedFields.includes(field))) {
+        return res.status(400).json({
+            error: 'Передано невідомі поля'
+        });
+    }
+
+    // Перевірка логіна
+    if (
+        typeof login !== 'string' ||
+        !login.trim() ||
+        login !== login.trim()
+    ) {
+        return res.status(400).json({
+            error: 'Вкажіть коректний логін'
+        });
+    }
+
+    // Перевірка пароля
+    if (typeof password !== 'string' || password.length < 12) {
+        return res.status(400).json({
+            error: 'Пароль повинен містити щонайменше 12 символів'
+        });
+    }
+
+    // Перевірка ролі
+    if (!allowedRoles.includes(role)) {
+        return res.status(400).json({
+            error: 'Недопустима роль користувача'
+        });
+    }
+
+    // Менеджер може створювати тільки батьків
+    if (req.user.role === 'manager' && role !== 'parent') {
+        return res.status(403).json({
+            error: 'Менеджер може створювати лише користувачів із роллю parent'
+        });
+    }
+
+    const normalizedParentId = parentId == null ? null : parentId;
+    const normalizedEmployeeId = employeeId == null ? null : employeeId;
+
+    // Перевірка зв'язків відповідно до ролі
+    if (role === 'parent') {
+        if (
+            !Number.isInteger(normalizedParentId) ||
+            normalizedParentId <= 0 ||
+            normalizedEmployeeId !== null
+        ) {
+            return res.status(400).json({
+                error: 'Для parent потрібен коректний parentId'
+            });
+        }
+
+        const parent = db.prepare(
+            'SELECT id FROM parents WHERE id = ?'
+        ).get(normalizedParentId);
+
+        if (!parent) {
+            return res.status(404).json({
+                error: 'Батька не знайдено'
+            });
+        }
+    } else if (role === 'teacher') {
+        if (
+            !Number.isInteger(normalizedEmployeeId) ||
+            normalizedEmployeeId <= 0 ||
+            normalizedParentId !== null
+        ) {
+            return res.status(400).json({
+                error: 'Для teacher потрібен коректний employeeId'
+            });
+        }
+
+        const employee = db.prepare(
+            'SELECT id, position FROM employees WHERE id = ?'
+        ).get(normalizedEmployeeId);
+
+        if (!employee) {
+            return res.status(404).json({
+                error: 'Працівника не знайдено'
+            });
+        }
+
+        if (employee.position !== 'teacher') {
+            return res.status(400).json({
+                error: 'Працівник повинен мати посаду teacher'
+            });
+        }
+    } else if (
+        normalizedParentId !== null ||
+        normalizedEmployeeId !== null
+    ) {
+        return res.status(400).json({
+            error: 'Для admin і manager зв’язки parentId та employeeId заборонені'
+        });
+    }
+
+    // Перевірка унікальності логіна
+    const existingUser = db.prepare(
+        'SELECT id FROM users WHERE login = ?'
+    ).get(login);
+
+    if (existingUser) {
+        return res.status(409).json({
+            error: 'Користувач із таким логіном уже існує'
+        });
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 12);
+
+    try {
+        const result = db.prepare(`
+            INSERT INTO users (login, passwordHash, role, parentId, employeeId)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            login,
+            passwordHash,
+            role,
+            normalizedParentId,
+            normalizedEmployeeId
+        );
+
+        return res.status(201).json({
+            id: Number(result.lastInsertRowid),
+            login,
+            role,
+            parentId: normalizedParentId,
+            employeeId: normalizedEmployeeId
+        });
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Користувач із таким логіном уже існує'
+            });
+        }
+
+        console.error('User creation failed:', error);
+
+        return res.status(500).json({
+            error: 'Не вдалося створити користувача'
+        });
+    }
+});
 // ==========================================
 // 3. БАТЬКИ ТА ПРАЦІВНИКИ
 // ==========================================
@@ -336,7 +616,7 @@ function getParentId(req) {
 
 
 // GET /parents - отримати всіх батьків
-app.get('/parents', (req, res) => {
+app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const parents = db.prepare(
         'SELECT * FROM parents'
     ).all();
@@ -345,7 +625,7 @@ app.get('/parents', (req, res) => {
 });
 
 // GET /parents/:id - отримати батька за ID
-app.get('/parents/:id', (req, res) => {
+app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const id = getParentId(req);
 
     if (id === null) {
@@ -364,7 +644,7 @@ app.get('/parents/:id', (req, res) => {
 });
 
 // POST /parents - створити батька
-app.post('/parents', (req, res) => {
+app.post('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const data = req.body;
 
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -397,7 +677,7 @@ app.post('/parents', (req, res) => {
 });
 
 // PATCH /parents/:id - оновити батька
-app.patch('/parents/:id', (req, res) => {
+app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const id = getParentId(req);
 
     if (id === null) {
@@ -455,7 +735,7 @@ app.patch('/parents/:id', (req, res) => {
 });
 
 // DELETE /parents/:id - видалити батька
-app.delete('/parents/:id', (req, res) => {
+app.delete('/parents/:id', authenticate, requireRole('admin'), (req, res) => {
     const id = getParentId(req);
 
     if (id === null) {
@@ -607,7 +887,7 @@ function validateEmployeeRelations(id, position) {
 
 
 // GET /employees - отримати всіх працівників
-app.get('/employees', (req, res) => {
+app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const employees = db.prepare(
         'SELECT * FROM employees'
     ).all();
@@ -616,7 +896,7 @@ app.get('/employees', (req, res) => {
 });
 
 // GET /employees/:id - отримати працівника за ID
-app.get('/employees/:id', (req, res) => {
+app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const id = getEmployeeId(req);
 
     if (id === null) {
@@ -635,7 +915,7 @@ app.get('/employees/:id', (req, res) => {
 });
 
 // POST /employees - створити працівника
-app.post('/employees', (req, res) => {
+app.post('/employees', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const data = req.body;
 
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -675,7 +955,7 @@ app.post('/employees', (req, res) => {
 });
 
 // PATCH /employees/:id - оновити працівника
-app.patch('/employees/:id', (req, res) => {
+app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const id = getEmployeeId(req);
 
     if (id === null) {
@@ -737,7 +1017,7 @@ app.patch('/employees/:id', (req, res) => {
 });
 
 // DELETE /employees/:id - видалити працівника
-app.delete('/employees/:id', (req, res) => {
+app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
     const id = getEmployeeId(req);
 
     if (id === null) {
