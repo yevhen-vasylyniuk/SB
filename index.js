@@ -818,6 +818,58 @@ app.delete('/employees/:id', (req, res) => {
 
 
 // ==========================================
+// РОЗКЛАД
+// ==========================================
+
+function generateScheduleLogic() {
+    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
+    const activities = db.prepare('SELECT * FROM activities LIMIT 5').all();
+
+    if (activities.length < 5) {
+        throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
+    }
+
+    for (const act of activities) {
+        if (!act.teacherId || !act.roomId) {
+            throw new Error(`Дисципліна "${act.name}" не має призначеного викладача або кімнати.`);
+        }
+    }
+
+    const insertSlot = db.prepare(`
+        INSERT INTO schedule_slots (groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const generate = db.transaction(() => {
+        db.prepare('DELETE FROM schedule_slots').run();
+        const numActivities = 5;
+        
+        for (let d = 0; d < 5; d++) {
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i];
+                const activityIndex = (i + d) % numActivities;
+                const activity = activities[activityIndex];
+
+                const slotIndex = Math.floor(i / numActivities);
+                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30); 
+                
+                const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+                const mm = (totalMinutes % 60).toString().padStart(2, '0');
+                const startTime = `${hh}:${mm}`;
+
+                insertSlot.run(
+                    group.id, activity.id, activity.teacherId, 
+                    activity.roomId, d, startTime, 30
+                );
+            }
+        }
+    });
+
+    generate();
+}
+
+
+// ==========================================
 // 7. ОБРОБКА ПОМИЛОК
 // ==========================================
 // Обробники помилок розміщені після маршрутів API.
