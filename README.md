@@ -366,6 +366,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Команда згенерує випадковий секретний ключ. Вставте його у `JWT_SECRET`.
 
+Значення `JWT_SECRET` повинно містити щонайменше 32 символи.
+
 **5. Запуск проєкту**
 
 ```bash
