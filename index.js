@@ -964,6 +964,111 @@ app.patch('/schedules/:id', (req, res) => {
 });
 
 // ==========================================
+// ПРИБУТОК
+// ==========================================
+
+// --- ТИМЧАСОВІ ЗАГЛУШКИ (від Петра) ---
+function calcTuition(child) { return { perMonth: 15000, perYear: 180000 }; }
+function calcEducatorSalary(kidsCount) { return 39000; }
+function calcAssistantSalary(kidsCount) { return 29000; }
+// --------------------------------------
+
+// --- ЧИСТІ ФУНКЦІЇ ДЛЯ РОЗРАХУНКУ ПРИБУТКУ ---
+function calcGroupProfit(groupId) {
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
+    if (!group) throw new Error('Групу не знайдено');
+
+    // ТЗ: Рахуємо тільки активних дітей
+    const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(groupId);
+    const kidsCount = children.length;
+
+    let totalIncome = 0;
+    for (const child of children) {
+        totalIncome += calcTuition(child).perMonth;
+    }
+
+    const educatorSalary = calcEducatorSalary(kidsCount);
+    const assistantSalary = calcAssistantSalary(kidsCount);
+    // Формула Тім Ліда: прибуток групи мінус 50 000
+    const totalExpenses = 50000 + educatorSalary + assistantSalary;
+
+    return {
+        groupName: group.name,
+        childrenCount: kidsCount,
+        income: totalIncome,
+        expenses: totalExpenses,
+        netProfit: totalIncome - totalExpenses
+    };
+}
+
+function calcKindergartenProfit() {
+    const groups = db.prepare('SELECT id FROM groups').all();
+    
+    let totalKindergartenIncome = 0;
+    let totalGroupExpenses = 0;
+
+    for (const g of groups) {
+        // ТЗ: Рахуємо тільки активних дітей
+        const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(g.id);
+        const kidsCount = children.length;
+
+        for (const child of children) {
+            totalKindergartenIncome += calcTuition(child).perMonth;
+        }
+        totalGroupExpenses += calcEducatorSalary(kidsCount) + calcAssistantSalary(kidsCount);
+    }
+
+    // Рахуємо оренду всіх кімнат та кількість викладачів
+    const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
+    const totalRent = room && room.totalRent ? room.totalRent : 0;
+    
+    const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
+    // Формула Тім Ліда: мінус оренда кімнат і 80 000
+    const totalKindergartenExpenses = totalRent + 80000 + (40000 * teachersCount) + totalGroupExpenses;
+
+    return {
+        totalIncome: totalKindergartenIncome,
+        totalExpenses: totalKindergartenExpenses,
+        totalNetProfit: totalKindergartenIncome - totalKindergartenExpenses
+    };
+}
+
+// --- ЕНДПОІНТИ ПРИБУТКУ ---
+
+// 5. Отримати прибуток для конкретної групи
+app.get('/groups/:id/profit', (req, res) => {
+    // TODO: Розкоментувати після додавання авторизації Миколою (ТЗ: Тільки admin)
+    // if (!req.user || req.user.role !== 'admin') {
+    //     return res.status(403).json({ error: 'Доступ дозволено лише адміністраторам.' });
+    // }
+
+    try {
+        const profitData = calcGroupProfit(Number(req.params.id));
+        res.status(200).json(profitData);
+    } catch (error) {
+        if (error.message === 'Групу не знайдено') {
+            return res.status(404).json({ error: error.message });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 6. Отримати загальний фінансовий звіт по садочку
+app.get('/admin/profit', (req, res) => {
+    // TODO: Розкоментувати після додавання авторизації Миколою (ТЗ: Тільки admin)
+    // if (!req.user || req.user.role !== 'admin') {
+    //     return res.status(403).json({ error: 'Доступ дозволено лише адміністраторам.' });
+    // }
+
+    try {
+        const profitData = calcKindergartenProfit();
+        res.status(200).json(profitData);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ==========================================
 // 7. ОБРОБКА ПОМИЛОК
 // ==========================================
 // Обробники помилок розміщені після маршрутів API.
