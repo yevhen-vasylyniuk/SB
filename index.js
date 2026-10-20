@@ -1166,8 +1166,26 @@ app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (
     }
 });
 
-// 2. Отримати розклад для групи (ТЗ: доступно авторизованим)
+// 2. Отримати розклад для групи (ТЗ: батьки - своя дитина, вчителі - свої групи, admin/manager - всі)
 app.get('/groups/:id/schedule', authenticate, (req, res) => {
+    const groupId = Number(req.params.id);
+
+    // Перевірка прав доступу за ТЗ
+    if (req.user.role === 'parent') {
+        // Батько бачить тільки групу своєї дитини
+        const childInGroup = db.prepare('SELECT 1 FROM children WHERE parentId = ? AND groupId = ? LIMIT 1').get(req.user.parentId, groupId);
+        if (!childInGroup) {
+            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
+        }
+    } else if (req.user.role === 'teacher') {
+        // Викладач бачить розклад лише тих груп, де він веде заняття
+        const teachesInGroup = db.prepare('SELECT 1 FROM schedule_slots WHERE teacherId = ? AND groupId = ? LIMIT 1').get(req.user.employeeId, groupId);
+        if (!teachesInGroup) {
+            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише своїх груп.' });
+        }
+    }
+    // Якщо роль admin або manager — код просто йде далі без блокування
+
     const schedule = db.prepare(`
         SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
                a.name as activityName, e.fullName as teacherName, r.name as roomName
@@ -1177,14 +1195,25 @@ app.get('/groups/:id/schedule', authenticate, (req, res) => {
         JOIN rooms r ON s.roomId = r.id
         WHERE s.groupId = ?
         ORDER BY s.dayOfWeek, s.startTime
-    `).all(Number(req.params.id));
+    `).all(groupId);
 
     if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
     res.status(200).json(schedule);
 });
 
-// 3. Отримати розклад для викладача (ТЗ: доступно авторизованим)
+// 3. Отримати розклад для викладача (ТЗ: тільки свій розклад, admin/manager - всі)
 app.get('/teachers/:id/schedule', authenticate, (req, res) => {
+    const requestedTeacherId = Number(req.params.id);
+
+    // Перевірка прав доступу за ТЗ
+    if (req.user.role === 'parent') {
+        return res.status(403).json({ error: 'Доступ заборонено. Батьки не мають доступу до персональних розкладів викладачів.' });
+    } else if (req.user.role === 'teacher' && req.user.employeeId !== requestedTeacherId) {
+        // Викладач бачить тільки свій розклад
+        return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати лише власний розклад.' });
+    }
+    // admin та manager проходять без додаткових перевірок
+
     const schedule = db.prepare(`
         SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
                g.name as groupName, a.name as activityName, r.name as roomName
@@ -1194,7 +1223,7 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
         JOIN rooms r ON s.roomId = r.id
         WHERE s.teacherId = ?
         ORDER BY s.dayOfWeek, s.startTime
-    `).all(Number(req.params.id));
+    `).all(requestedTeacherId);
 
     if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
     res.status(200).json(schedule);
