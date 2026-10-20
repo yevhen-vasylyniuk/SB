@@ -1101,6 +1101,12 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
 // РОЗКЛАД
 // ==========================================
 
+// --- ТИМЧАСОВА ЗАГЛУШКА (від Громова) ---
+function findScheduleConflict(slot, ignoreId) { 
+    return null; 
+}
+// ----------------------------------------
+
 function generateScheduleLogic() {
     const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
     const activities = db.prepare('SELECT * FROM activities LIMIT 5').all();
@@ -1151,7 +1157,7 @@ function generateScheduleLogic() {
 // --- ЕНДПОІНТИ РОЗКЛАДУ ---
 
 // 1. Згенерувати розклад
-app.post('/schedules/generate', (req, res) => {
+app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (req, res) => {
     try {
         generateScheduleLogic();
         res.status(201).json({ message: 'Розклад на тиждень успішно згенеровано.' });
@@ -1160,8 +1166,8 @@ app.post('/schedules/generate', (req, res) => {
     }
 });
 
-// 2. Отримати розклад для групи
-app.get('/groups/:id/schedule', (req, res) => {
+// 2. Отримати розклад для групи (ТЗ: доступно авторизованим)
+app.get('/groups/:id/schedule', authenticate, (req, res) => {
     const schedule = db.prepare(`
         SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
                a.name as activityName, e.fullName as teacherName, r.name as roomName
@@ -1177,8 +1183,8 @@ app.get('/groups/:id/schedule', (req, res) => {
     res.status(200).json(schedule);
 });
 
-// 3. Отримати розклад для викладача
-app.get('/teachers/:id/schedule', (req, res) => {
+// 3. Отримати розклад для викладача (ТЗ: доступно авторизованим)
+app.get('/teachers/:id/schedule', authenticate, (req, res) => {
     const schedule = db.prepare(`
         SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
                g.name as groupName, a.name as activityName, r.name as roomName
@@ -1194,53 +1200,65 @@ app.get('/teachers/:id/schedule', (req, res) => {
     res.status(200).json(schedule);
 });
 
-// --- ТИМЧАСОВА ЗАГЛУШКА (від Громова) ---
-function findScheduleConflict(slot, ignoreId) { return null; }
-// ----------------------------------------
-
 // 4. Оновити слот розкладу (перенести урок)
-app.patch('/schedules/:id', (req, res) => {
-    const slotId = Number(req.params.id);
-    const { startTime, dayOfWeek } = req.body;
-    
-    const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
-    if (!validTimes.includes(startTime) || dayOfWeek < 0 || dayOfWeek > 4) {
-        return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4.' });
+app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), (req, res) => {
+    try {
+        const slotId = Number(req.params.id);
+        
+        // Валідація на порожнє тіло та наявність полів
+        if (!req.body || req.body.startTime === undefined || req.body.dayOfWeek === undefined) {
+            return res.status(400).json({ error: 'Відсутні обов\'язкові поля: startTime, dayOfWeek' });
+        }
+
+        const { startTime, dayOfWeek } = req.body;
+        
+        // Сувора валідація типу і значень (isInteger і т.д.)
+        const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
+        if (!validTimes.includes(startTime) || !Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 4) {
+            return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).' });
+        }
+
+        const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
+        if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
+
+        // Перевірка: вчитель може міняти тільки свої заняття
+        if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
+            return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
+        }
+
+        // Перевірка колізій через функцію Громова
+        const conflict = findScheduleConflict({
+            groupId: currentSlot.groupId,
+            teacherId: currentSlot.teacherId,
+            roomId: currentSlot.roomId,
+            dayOfWeek: dayOfWeek,
+            startTime: startTime,
+            durationMin: 30
+        }, slotId);
+
+        if (conflict) {
+            return res.status(409).json({ 
+                error: 'Колізія розкладу: час вже зайнятий', 
+                type: conflict.type, 
+                slotId: conflict.slotId 
+            });
+        }
+
+        db.prepare(`
+            UPDATE schedule_slots 
+            SET startTime = ?, dayOfWeek = ? 
+            WHERE id = ?
+        `).run(startTime, dayOfWeek, slotId);
+        
+        res.status(200).json({ message: 'Слот успішно оновлено' });
+
+    } catch (error) {
+        // Перехоплення унікальності на рівні БД
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
+        }
+        res.status(500).json({ error: error.message });
     }
-
-    const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
-    if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
-
-    // TODO: Розкоментувати після додавання авторизації Миколою
-    // if (req.user && req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
-    //     return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
-    // }
-
-    // Перевірка колізій через функцію Громова
-    const conflict = findScheduleConflict({
-        groupId: currentSlot.groupId,
-        teacherId: currentSlot.teacherId,
-        roomId: currentSlot.roomId,
-        dayOfWeek: dayOfWeek,
-        startTime: startTime,
-        durationMin: 30
-    }, slotId);
-
-    if (conflict) {
-        return res.status(409).json({ 
-            error: 'Колізія розкладу: час вже зайнятий', 
-            type: conflict.type, 
-            slotId: conflict.slotId 
-        });
-    }
-
-    db.prepare(`
-        UPDATE schedule_slots 
-        SET startTime = ?, dayOfWeek = ? 
-        WHERE id = ?
-    `).run(startTime, dayOfWeek, slotId);
-    
-    res.status(200).json({ message: 'Слот успішно оновлено' });
 });
 
 // ==========================================
@@ -1258,7 +1276,6 @@ function calcGroupProfit(groupId) {
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
     if (!group) throw new Error('Групу не знайдено');
 
-    // ТЗ: Рахуємо тільки активних дітей
     const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(groupId);
     const kidsCount = children.length;
 
@@ -1269,7 +1286,6 @@ function calcGroupProfit(groupId) {
 
     const educatorSalary = calcEducatorSalary(kidsCount);
     const assistantSalary = calcAssistantSalary(kidsCount);
-    // Формула Тім Ліда: прибуток групи мінус 50 000
     const totalExpenses = 50000 + educatorSalary + assistantSalary;
 
     return {
@@ -1282,28 +1298,25 @@ function calcGroupProfit(groupId) {
 }
 
 function calcKindergartenProfit() {
-    const groups = db.prepare('SELECT id FROM groups').all();
+    const allActiveChildren = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE isActive = 1').all();
     
     let totalKindergartenIncome = 0;
+    for (const child of allActiveChildren) {
+        totalKindergartenIncome += calcTuition(child).perMonth;
+    }
+
+    const groups = db.prepare('SELECT id FROM groups').all();
     let totalGroupExpenses = 0;
 
     for (const g of groups) {
-        // ТЗ: Рахуємо тільки активних дітей
-        const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(g.id);
-        const kidsCount = children.length;
-
-        for (const child of children) {
-            totalKindergartenIncome += calcTuition(child).perMonth;
-        }
-        totalGroupExpenses += calcEducatorSalary(kidsCount) + calcAssistantSalary(kidsCount);
+        const kidsInGroup = db.prepare('SELECT count(*) as count FROM children WHERE groupId = ? AND isActive = 1').get(g.id).count;
+        totalGroupExpenses += calcEducatorSalary(kidsInGroup) + calcAssistantSalary(kidsInGroup);
     }
 
-    // Рахуємо оренду всіх кімнат та кількість викладачів
     const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
     const totalRent = room && room.totalRent ? room.totalRent : 0;
     
     const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
-    // Формула Тім Ліда: мінус оренда кімнат і 80 000
     const totalKindergartenExpenses = totalRent + 80000 + (40000 * teachersCount) + totalGroupExpenses;
 
     return {
@@ -1316,12 +1329,7 @@ function calcKindergartenProfit() {
 // --- ЕНДПОІНТИ ПРИБУТКУ ---
 
 // 5. Отримати прибуток для конкретної групи
-app.get('/groups/:id/profit', (req, res) => {
-    // TODO: Розкоментувати після додавання авторизації Миколою (ТЗ: Тільки admin)
-    // if (!req.user || req.user.role !== 'admin') {
-    //     return res.status(403).json({ error: 'Доступ дозволено лише адміністраторам.' });
-    // }
-
+app.get('/groups/:id/profit', authenticate, requireRole('admin'), (req, res) => {
     try {
         const profitData = calcGroupProfit(Number(req.params.id));
         res.status(200).json(profitData);
@@ -1334,12 +1342,7 @@ app.get('/groups/:id/profit', (req, res) => {
 });
 
 // 6. Отримати загальний фінансовий звіт по садочку
-app.get('/admin/profit', (req, res) => {
-    // TODO: Розкоментувати після додавання авторизації Миколою (ТЗ: Тільки admin)
-    // if (!req.user || req.user.role !== 'admin') {
-    //     return res.status(403).json({ error: 'Доступ дозволено лише адміністраторам.' });
-    // }
-
+app.get('/admin/profit', authenticate, requireRole('admin'), (req, res) => {
     try {
         const profitData = calcKindergartenProfit();
         res.status(200).json(profitData);
