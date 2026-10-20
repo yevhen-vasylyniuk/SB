@@ -1174,70 +1174,6 @@ function handleDbError(res, error) {
     throw error;
 }
 
-// ---------- Автентифікація та ролі (мінімум для розмежування доступу) ----------
-const AUTH_DISABLED =
-    process.env.AUTH_DISABLED === 'true' &&
-    process.env.NODE_ENV !== 'production';
-
-if (AUTH_DISABLED) {
-    console.warn('УВАГА: авторизацію вимкнено (AUTH_DISABLED=true)');
-}
-function authenticate(req, res, next) {
-    if (AUTH_DISABLED) {
-        req.user = {
-            id: 0,
-            login: 'dev',
-            role: 'admin',
-            parentId: null,
-            employeeId: null,
-        };
-        return next();
-    }
-    const [scheme, token] = (req.headers.authorization || '').split(' ');
-
-    if (scheme !== 'Bearer' || !token) {
-        return res.status(401).json({ error: 'Потрібна авторизація' });
-    }
-
-    const secret = process.env.JWT_SECRET;
-
-    if (!secret) {
-        console.error('JWT_SECRET is not set');
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-
-    let payload;
-
-    try {
-        payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
-    } catch {
-        return res.status(401).json({ error: 'Недійсний токен' });
-    }
-
-    const user = db
-        .prepare(
-            'SELECT id, login, role, parentId, employeeId FROM users WHERE id = ?',
-        )
-        .get(payload.sub);
-
-    if (!user) {
-        return res.status(401).json({ error: 'Користувача не знайдено' });
-    }
-
-    req.user = user;
-    next();
-}
-
-function authorize(...roles) {
-    return (req, res, next) => {
-        if (!roles.includes(req.user.role)) {
-            return res.status(403).json({ error: 'Недостатньо прав' });
-        }
-
-        next();
-    };
-}
-
 // Групи, до яких має відношення викладач/вихователь
 function getTeacherGroupIds(employeeId) {
     return db
@@ -1538,7 +1474,7 @@ app.get('/groups/:id', authenticate, (req, res) => {
 app.get(
     '/groups/:id/children',
     authenticate,
-    authorize('admin', 'manager', 'teacher'),
+    requireRole('admin', 'manager', 'teacher'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -1567,7 +1503,7 @@ app.get(
 );
 
 // POST /groups
-app.post('/groups', authenticate, authorize('admin', 'manager'), (req, res) => {
+app.post('/groups', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const data = req.body;
 
     if (!isPlainObject(data)) {
@@ -1629,7 +1565,7 @@ app.post('/groups', authenticate, authorize('admin', 'manager'), (req, res) => {
 app.patch(
     '/groups/:id',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -1730,7 +1666,7 @@ app.patch(
 app.delete(
     '/groups/:id',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -2009,7 +1945,7 @@ app.get('/children/:id', authenticate, (req, res) => {
 app.post(
     '/children',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const data = req.body;
 
@@ -2104,7 +2040,7 @@ app.post(
 app.patch(
     '/children/:id',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -2208,7 +2144,7 @@ app.patch(
 app.put(
     '/children/:id/parents',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -2273,7 +2209,7 @@ app.put(
 app.delete(
     '/children/:id',
     authenticate,
-    authorize('admin', 'manager'),
+    requireRole('admin', 'manager'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -2299,6 +2235,7 @@ app.delete(
         res.status(204).send();
     },
 );
+
 // ==========================================
 // 5. КІМНАТИ ТА ЗАНЯТТЯ
 // ==========================================
@@ -2320,13 +2257,7 @@ app.delete(
 // ==========================================
 // 8. ПЕРЕВІРКА РОБОТИ API
 // ==========================================
-
 app.get('/api/health', (req, res) => {
-<<<<<<< HEAD
-    res.json({
-        status: 'ok',
-        message: 'Kindergarten API працює',
-=======
     try {
         db.prepare('SELECT 1').get();
 
@@ -2374,7 +2305,6 @@ app.use((err, req, res, next) => {
     // Інші непередбачені помилки
     return res.status(500).json({
         error: 'Internal server error'
->>>>>>> origin/dev
     });
 });
 
