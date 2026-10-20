@@ -868,6 +868,52 @@ function generateScheduleLogic() {
     generate();
 }
 
+// --- ЕНДПОІНТИ РОЗКЛАДУ ---
+
+// 1. Згенерувати розклад
+app.post('/schedules/generate', (req, res) => {
+    try {
+        generateScheduleLogic();
+        res.status(201).json({ message: 'Розклад на тиждень успішно згенеровано.' });
+    } catch (error) {
+        res.status(409).json({ error: error.message });
+    }
+});
+
+// 2. Отримати розклад для групи
+app.get('/groups/:id/schedule', (req, res) => {
+    const schedule = db.prepare(`
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+               a.name as activityName, e.fullName as teacherName, r.name as roomName
+        FROM schedule_slots s
+        JOIN activities a ON s.activityId = a.id
+        JOIN employees e ON s.teacherId = e.id
+        JOIN rooms r ON s.roomId = r.id
+        WHERE s.groupId = ?
+        ORDER BY s.dayOfWeek, s.startTime
+    `).all(Number(req.params.id));
+
+    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
+    res.status(200).json(schedule);
+});
+
+// 3. Отримати розклад для викладача
+app.get('/teachers/:id/schedule', (req, res) => {
+    const schedule = db.prepare(`
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+               g.name as groupName, a.name as activityName, r.name as roomName
+        FROM schedule_slots s
+        JOIN groups g ON s.groupId = g.id
+        JOIN activities a ON s.activityId = a.id
+        JOIN rooms r ON s.roomId = r.id
+        WHERE s.teacherId = ?
+        ORDER BY s.dayOfWeek, s.startTime
+    `).all(Number(req.params.id));
+
+    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
+    res.status(200).json(schedule);
+});
+
 
 // ==========================================
 // 7. ОБРОБКА ПОМИЛОК
