@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "e74aa11d-d5b0-4721-bd0f-c361873814a7",
-    "name": "Kindergarten API — QA (dev, JWT-ready)",
-    "description": "Колекція для тестування актуальних маршрутів /api/health, /parents, /employees у dev. Основні 28 запитів адаптовано з перевіреної QA-колекції. Додано Login admin і окремі негативні тести 401/403 після інтеграції JWT. Використовуйте environment local із пустими секретними змінними: adminPassword, token, restrictedToken. На поточному index.js авторизації ще немає: поки запускайте папки 01–04; після PR авторизації — спочатку 00, далі 01–05. Тести модифікують локальну тестову БД; DELETE видаляє записи, створені колекцією. Для 403 необхідний токен користувача з роллю parent/teacher у restrictedToken; без нього цей запит пропускається.",
+    "name": "Kindergarten API — QA (dev: JWT, groups, children, invoice)",
+    "description": "Postman QA для реалізованих маршрутів актуального dev: GET /api/health; CRUD /parents, /employees, /groups, /children; GET /groups/:id/children; PUT /children/:id/parents; GET /children/:id/invoice; POST /auth/login, POST /users (у цій колекції /users не тестується). У колекції збережено старі CRUD-тести й додано сценарії груп (вік 2–5, місткість, унікальність), дітей (основний представник та guardianIds, вікова відповідність і місткість) та місячного/річного рахунку (тарифи 15000, знижки, харчування). Авторизація колекції — Bearer {{token}}. ПЕРЕД запуском захищених маршрутів виконайте папку 00 Login admin; заповніть adminPassword ЛИШЕ локально у Postman Environment. Для повного проходження обирайте папки 00–09 у порядку, потім окрему папку 10 із негативними 401/403. Папки 05–09 формують один послідовний сценарій: власні батьки → група → дитина → рахунок → очищення. Не запускайте їх на цінній або production БД: запити змінюють і видаляють тестові записи. Секретні значення adminPassword, token, restrictedToken мають залишатися порожніми в експорті. Для перевірки 403 потрібен окремий JWT користувача неадміністративної ролі у restrictedToken.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -45,11 +45,46 @@
       "key": "qaManagerExists",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "qaPrimaryParentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaGuardianParentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaGroupId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaGroupName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaChildId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaBirthDate",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaWrongAgeDate",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
     {
-      "name": "00 — Login admin (після інтеграції JWT)",
+      "name": "00 — Login admin (спочатку запустити)",
       "description": "Поточний index.js не має /auth/login. Запускайте після злиття PR авторизації. Для запуску старого dev без JWT пропускайте цю папку.",
       "item": [
         {
@@ -79,7 +114,7 @@
               }
             },
             "url": "{{baseUrl}}/auth/login",
-            "description": "Запускайте ПЕРШИМ після інтеграції PR авторизації. Пароль береться із локального environment, не з колекції. Відповідь JWT зберігається у змінній оточення token."
+            "description": "JWT-авторизація вже реалізована в актуальному index.js. Запускається першим. Зчитує adminLogin/adminPassword із локального environment; токен зберігається у {{token}}. Заборонено експортувати environment із введеними токеном або паролем."
           },
           "event": [
             {
@@ -1276,7 +1311,1102 @@
       ]
     },
     {
-      "name": "05 — Авторизація: негативні 401/403 (після PR JWT)",
+      "name": "05 — Підготовка: батьки та група",
+      "description": "Виконувати до папок 06–09. Усі створені дані видаляються в 09.",
+      "item": [
+        {
+          "name": "29 · POST /parents — основний представник → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Підготовка ізольованого сценарію: створити основного представника, зберегти його id.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Invoice Parent {{$guid}}\",\n  \"phone\": \"+380991110001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('qaPrimaryParentId');",
+                  "pm.collectionVariables.unset('qaGuardianParentId');",
+                  "pm.collectionVariables.unset('qaGroupId');",
+                  "pm.collectionVariables.unset('qaGroupName');",
+                  "pm.collectionVariables.unset('qaChildId');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Створено основного представника', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.id).to.be.a('number').above(0);",
+                  "  pm.collectionVariables.set('qaPrimaryParentId', String(d.id));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "30 · POST /parents — додатковий опікун → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "description": "Тестовий другий представник для child_parents.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Guardian {{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Опікун створений', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.id).to.be.a('number').above(0);",
+                  "  pm.collectionVariables.set('qaGuardianParentId', String(d.id));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "31 · POST /groups — група 3 роки, місткість 1 → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "description": "Підготовка: окрема група на одну дитину, без rooms/educators (ще немає їх CRUD).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"QA Group {{$guid}}\",\n  \"ageCategory\": 3,\n  \"capacity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Група створена', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.id).to.be.a('number').above(0);",
+                  "  pm.expect(d.ageCategory).to.eql(3);",
+                  "  pm.expect(d.capacity).to.eql(1);",
+                  "  pm.collectionVariables.set('qaGroupId', String(d.id));",
+                  "  pm.collectionVariables.set('qaGroupName', d.name);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 — Групи: CRUD, конфлікти",
+      "description": "Група створюється у 05, видаляється у 09. Перевіряє реалізовані GET, POST, PATCH, перевірку унікальності та віку.",
+      "item": [
+        {
+          "name": "32 · GET /groups — список → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "description": "Адміністратор бачить створену QA-групу."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('QA-група присутня', () => {",
+                  "  const rows = pm.response.json();",
+                  "  pm.expect(rows).to.be.an('array');",
+                  "  pm.expect(rows.some(g => String(g.id) === pm.collectionVariables.get('qaGroupId'))).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "33 · GET /groups/:id — деталі → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Правильна група, початково порожня', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaGroupId'));",
+                  "  pm.expect(d.ageCategory).to.eql(3);",
+                  "  pm.expect(d.enrolled).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "34 · PATCH /groups/:id — перейменування → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"QA Group Updated {{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Групу оновлено', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.name).to.include('QA Group Updated');",
+                  "  pm.expect(d.capacity).to.eql(1);",
+                  "  pm.collectionVariables.set('qaGroupName', d.name);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "35 · POST /groups — дубль назви → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{qaGroupName}}\",\n  \"ageCategory\": 3,\n  \"capacity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Конфлікт унікальної назви', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "36 · POST /groups — ageCategory = 6 → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"QA Bad Age {{$guid}}\",\n  \"ageCategory\": 6\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Валідація віку групи', () => pm.expect(pm.response.json().error).to.include('від 2 до 5'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 — Діти: CRUD, опікуни, вік, місткість",
+      "description": "Послідовні тести дитини з залежністю від папки 05. Тест не створює реальних акаунтів users.",
+      "item": [
+        {
+          "name": "37 · POST /children — дитина 3 роки з опікуном → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "description": "Дитина 3 років, група ageCategory=3, двоє представників, місячна оплата й знижка 10%.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Child {{$guid}}\",\"birthDate\":\"{{qaBirthDate}}\",\"parentId\":{{qaPrimaryParentId}},\"guardianIds\":[{{qaGuardianParentId}}],\"groupId\":{{qaGroupId}},\"discountPercent\":10,\"paymentPlan\":\"monthly\",\"isActive\":true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date();",
+                  "const dateYearsAgo = (years) => {",
+                  "  const y = now.getUTCFullYear() - years;",
+                  "  const m = now.getUTCMonth();",
+                  "  const d = Math.min(now.getUTCDate(), new Date(Date.UTC(y, m + 1, 0)).getUTCDate());",
+                  "  return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);",
+                  "};",
+                  "pm.collectionVariables.set('qaBirthDate', dateYearsAgo(3));",
+                  "pm.collectionVariables.set('qaWrongAgeDate', dateYearsAgo(4));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Дитина створена, обидва представники прив’язані', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.id).to.be.a('number').above(0);",
+                  "  pm.expect(d.groupId).to.eql(Number(pm.collectionVariables.get('qaGroupId')));",
+                  "  pm.expect(d.discountPercent).to.eql(10);",
+                  "  pm.expect(d.parents).to.be.an('array').with.lengthOf(2);",
+                  "  pm.collectionVariables.set('qaChildId', String(d.id));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "38 · GET /children?groupId&isActive → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children?groupId={{qaGroupId}}&isActive=true",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Фільтр повернув тестову дитину', () => {",
+                  "  const rows = pm.response.json();",
+                  "  pm.expect(rows).to.be.an('array');",
+                  "  pm.expect(rows.some(c => String(c.id) === pm.collectionVariables.get('qaChildId'))).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "39 · GET /children/:id → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Дитина з групою і представниками', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaChildId'));",
+                  "  pm.expect(d.group.id).to.eql(Number(pm.collectionVariables.get('qaGroupId')));",
+                  "  pm.expect(d.parents).to.have.lengthOf(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "40 · GET /groups/:id/children → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}/children",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('У групі саме тестова дитина', () => {",
+                  "  const rows = pm.response.json();",
+                  "  pm.expect(rows).to.be.an('array').with.lengthOf(1);",
+                  "  pm.expect(String(rows[0].id)).to.eql(pm.collectionVariables.get('qaChildId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "41 · PUT /children/:id/parents — оновити опікунів → 200",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}/parents",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"parentId\":{{qaPrimaryParentId}},\"guardianIds\":[{{qaGuardianParentId}}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Основний представник та опікун збережені', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.parents).to.be.an('array').with.lengthOf(2);",
+                  "  const primary = d.parents.find(p => p.isPrimary === true);",
+                  "  pm.expect(primary.id).to.eql(Number(pm.collectionVariables.get('qaPrimaryParentId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "42 · POST /children — невідповідний вік групи → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Wrong Age {{$guid}}\",\"birthDate\":\"{{qaWrongAgeDate}}\",\"parentId\":{{qaPrimaryParentId}},\"groupId\":{{qaGroupId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Вік дитини не відповідає категорії групи', () => pm.expect(pm.response.json().error).to.include('не відповідає'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "43 · POST /children — перевищена місткість → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Capacity {{$guid}}\",\"birthDate\":\"{{qaBirthDate}}\",\"parentId\":{{qaPrimaryParentId}},\"groupId\":{{qaGroupId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Група заповнена', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "44 · POST /children — знижка 50% → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Discount {{$guid}}\",\"birthDate\":\"{{qaBirthDate}}\",\"parentId\":{{qaPrimaryParentId}},\"discountPercent\":50}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Заборонено знижку 50%', () => pm.expect(pm.response.json().error).to.include('Знижка'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "45 · DELETE /groups/:id — є дитина → 409",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Групу з дитиною не видалено', () => pm.expect(pm.response.json().error).to.include('пов’язані'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "46 · GET /children/abc — неправильний ID → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/abc",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Повернено error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "08 — Рахунок дитини: місяць, рік, помилки",
+      "description": "Перевіряє формулу з надісланого index.js; очікувані суми в гривнях. Наприкінці деактивує тестову дитину.",
+      "item": [
+        {
+          "name": "47 · GET /children/:id/invoice — місяць → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}/invoice",
+            "description": "Тарифи з поточного index.js: 15000 за місяць, 10% знижка = 13500; харчування віку 3: 400*20=8000; total=21500."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Місячний рахунок = 21500 грн', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.period).to.eql('month');",
+                  "  pm.expect(d.paymentPlan).to.eql('monthly');",
+                  "  pm.expect(d.discountPercent).to.eql(10);",
+                  "  pm.expect(d.lines).to.deep.eql([{name:'Навчання',amount:13500},{name:'Харчування',amount:8000}]);",
+                  "  pm.expect(d.total).to.eql(21500);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "48 · PATCH /children/:id — річний план + 20% → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentPlan\": \"yearly\",\n  \"discountPercent\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Дитина переведена на yearly зі знижкою 20%', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.paymentPlan).to.eql('yearly');",
+                  "  pm.expect(d.discountPercent).to.eql(20);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "49 · GET /children/:id/invoice — рік → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}/invoice",
+            "description": "За кодом: tuition=15000*12*0.8*0.88=126720, meals=400*20*12=96000, total=222720."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Річний рахунок = 222720 грн', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.period).to.eql('year');",
+                  "  pm.expect(d.paymentPlan).to.eql('yearly');",
+                  "  pm.expect(d.lines).to.deep.eql([{name:'Навчання',amount:126720},{name:'Харчування',amount:96000}]);",
+                  "  pm.expect(d.total).to.eql(222720);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "50 · GET /children/999999999/invoice → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/999999999/invoice",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "",
+                  "pm.test('Немає рахунку неіснуючої дитини', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "51 · PATCH /children/:id — деактивація → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Дитина деактивована і виведена з групи', () => {",
+                  "  const d = pm.response.json();",
+                  "  pm.expect(d.isActive).to.eql(false);",
+                  "  pm.expect(d.groupId).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "52 · GET /children/:id/invoice — неактивна → 409",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}/invoice",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Для неактивної дитини рахунок недоступний', () => pm.expect(pm.response.json().error).to.include('неактивної'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 — Очистка QA-даних",
+      "description": "Увага: виконуйте після 05–08. Видалення в зворотному порядку залежностей: дитина, група, батьки.",
+      "item": [
+        {
+          "name": "53 · DELETE /children/:id → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaChildId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('Дитину видалено без тіла', () => pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaChildId');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "54 · DELETE /groups/:id → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('Групу видалено без тіла', () => pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaGroupId');",
+                  "pm.collectionVariables.unset('qaGroupName');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "55 · DELETE /parents/:id — основний → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaPrimaryParentId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('Основного представника видалено', () => pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaPrimaryParentId');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "56 · DELETE /parents/:id — опікун → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaGuardianParentId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "",
+                  "pm.test('Опікуна видалено', () => pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaGuardianParentId');",
+                  "pm.collectionVariables.unset('qaBirthDate');",
+                  "pm.collectionVariables.unset('qaWrongAgeDate');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 — Авторизація: негативні 401/403",
       "description": "Виконувати лише після інтеграції JWT. 401 без/з невалідним токеном і при неправильному паролі; 403 для ролі parent/teacher з окремим тестовим токеном restrictedToken. Якщо restrictedToken порожній — 403 запит буде SKIPPED, а не Passed.",
       "item": [
         {
@@ -1290,7 +2420,7 @@
               }
             ],
             "url": "{{baseUrl}}/parents",
-            "description": "Після інтеграції JWT має бути відхилено запит без Authorization.",
+            "description": "JWT у dev: має бути відхилено запит без Authorization.",
             "auth": {
               "type": "noauth"
             }
@@ -1328,7 +2458,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "invalid-token-for-negative-test",
+                  "value": "not.a.valid.jwt",
                   "type": "string"
                 }
               ]
@@ -1445,6 +2575,99 @@
               }
             }
           ]
+        },
+        {
+          "name": "401 — GET /groups без токена",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "pm.test('Авторизація обов’язкова', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "401 — GET /children без токена",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "pm.test('Авторизація обов’язкова', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "401 — GET /children/:id/invoice без токена",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/children/1/invoice",
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "pm.test('Перевірка токена перед існуванням дитини', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
         }
       ]
     }
