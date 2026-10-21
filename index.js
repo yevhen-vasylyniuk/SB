@@ -2398,7 +2398,81 @@ function calcAssistantSalary(kidsCount) {
     return CONFIG.ASSISTANT_BASE_SALARY + over * CONFIG.ASSISTANT_EXTRA_PER_CHILD;
 }
 
-// Далі тут буде GET /children/:id/invoice (після злиття дітей і груп).
+// GET /children/:id/invoice - рахунок рахується на льоту за поточними даними дитини.
+// Роли: admin і manager для будь-якої дитини; parent лише для своєї дитини і лише
+// основний представник (children.parentId), інші опікуни бачать дитину, але не рахунок.
+// Для неактивної дитини 409. Тариф харчування за віком групи (group.ageCategory),
+// а без групи за повним віком на дату запиту.
+app.get(
+    '/children/:id/invoice',
+    authenticate,
+    requireRole('admin', 'manager', 'parent'),
+    (req, res) => {
+        const id = parseId(req.params.id);
+
+        if (id === null) {
+            return res.status(400).json({ error: 'Некоректний ID дитини' });
+        }
+
+        const child = db.prepare('SELECT * FROM children WHERE id = ?').get(id);
+
+        if (!child || !canViewChild(req.user, child)) {
+            return res.status(404).json({ error: 'Дитину не знайдено' });
+        }
+
+        if (req.user.role === 'parent' && child.parentId !== req.user.parentId) {
+            return res.status(403).json({
+                error: 'Рахунок доступний лише основному представнику дитини'
+            });
+        }
+
+        if (child.isActive !== 1) {
+            return res.status(409).json({
+                error: 'Рахунок для неактивної дитини не формується'
+            });
+        }
+
+        let age;
+
+        if (child.groupId !== null) {
+            age = db
+                .prepare('SELECT ageCategory FROM groups WHERE id = ?')
+                .get(child.groupId).ageCategory;
+        } else {
+            age = calcAge(child.birthDate);
+        }
+
+        try {
+            const tuition = calcTuition(child);
+            const meals = calcMeals(age);
+            const isYearly = child.paymentPlan === 'yearly';
+
+            const tuitionAmount = isYearly ? tuition.perYear : tuition.perMonth;
+            const mealsAmount = isYearly ? meals.perYear : meals.perMonth;
+
+            return res.status(200).json({
+                childId: child.id,
+                fullName: child.fullName,
+                paymentPlan: child.paymentPlan,
+                discountPercent: child.discountPercent,
+                period: isYearly ? 'year' : 'month',
+                lines: [
+                    { name: 'Навчання', amount: tuitionAmount },
+                    { name: 'Харчування', amount: mealsAmount }
+                ],
+                total: tuitionAmount + mealsAmount
+            });
+        } catch (error) {
+            if (error instanceof RangeError) {
+                return res.status(409).json({
+                    error: 'Неможливо розрахувати рахунок: вік дитини поза діапазоном 2-5 років'
+                });
+            }
+
+            throw error;
+        }
+    }
+);
 
 
 // ==========================================
