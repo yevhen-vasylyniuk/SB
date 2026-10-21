@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "e74aa11d-d5b0-4721-bd0f-c361873814a7",
-    "name": "Kindergarten API — QA (dev: JWT, groups, children, invoice)",
-    "description": "Postman QA для реалізованих маршрутів актуального dev: GET /api/health; CRUD /parents, /employees, /groups, /children; GET /groups/:id/children; PUT /children/:id/parents; GET /children/:id/invoice; POST /auth/login, POST /users (у цій колекції /users не тестується). У колекції збережено старі CRUD-тести й додано сценарії груп (вік 2–5, місткість, унікальність), дітей (основний представник та guardianIds, вікова відповідність і місткість) та місячного/річного рахунку (тарифи 15000, знижки, харчування). Авторизація колекції — Bearer {{token}}. ПЕРЕД запуском захищених маршрутів виконайте папку 00 Login admin; заповніть adminPassword ЛИШЕ локально у Postman Environment. Для повного проходження обирайте папки 00–09 у порядку, потім окрему папку 10 із негативними 401/403. Папки 05–09 формують один послідовний сценарій: власні батьки → група → дитина → рахунок → очищення. Не запускайте їх на цінній або production БД: запити змінюють і видаляють тестові записи. Секретні значення adminPassword, token, restrictedToken мають залишатися порожніми в експорті. Для перевірки 403 потрібен окремий JWT користувача неадміністративної ролі у restrictedToken.",
+    "name": "Kindergarten API — QA dev + bonus role tests",
+    "description": "QA для API дитячого садка: health, parents/employees/groups/children CRUD, опікуни, рахунок, JWT. Бонус: admin створює manager, parent і guardian через POST /users, токени отримуються POST /auth/login; перевірки 403 на DELETE manager, parent notes/own-only, guardian invoice, вік 1/7 → 400, ліміт 30 груп → 409. Запускайте папки послідовно, починаючи з 00; 08A–08C перед 09, потім 10–12. Тестова база обов’язкова: API не має DELETE /users, тому створені користувачі залишаються. Рольові токени/пароль зберігаються тільки в локальному environment, експорт у Git — виключно очищений. Інструкції: BONUS_README.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -78,6 +78,66 @@
     },
     {
       "key": "qaWrongAgeDate",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaRoleParentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaRoleGuardianId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaRoleChildId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaUnrelatedChildId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaRoleSuffix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaManagerLogin",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaParentLogin",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaGuardianLogin",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaAge1BirthDate",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaAge7BirthDate",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaLimitIds",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qaLimitRunPrefix",
       "value": "",
       "type": "string"
     }
@@ -2281,6 +2341,904 @@
       ]
     },
     {
+      "name": "08A — Бонус: підготовка ролей через POST /users",
+      "description": "Послідовне створення окремих тестових записів і користувачів manager, parent та guardian. Виконувати тільки після 05–08 і до 09. На відміну від дітей, users не можна видалити через API; рекомендовано одноразову локальну БД.",
+      "item": [
+        {
+          "name": "57 · POST /parents — батько для рольового акаунта",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Role Parent {{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Новий прогін бонусних тестів: унікальні облікові записи та локальний пароль.",
+                  "const id = pm.variables.replaceIn('{{$guid}}').replace(/-/g, '').slice(0, 20);",
+                  "pm.collectionVariables.set('qaRoleSuffix', id);",
+                  "pm.environment.set('qaRolePassword', 'QaRole-' + pm.variables.replaceIn('{{$guid}}') + '!1A');",
+                  "['managerToken','parentToken','guardianToken'].forEach(k=>pm.environment.unset(k));",
+                  "['qaRoleParentId','qaRoleGuardianId','qaRoleChildId','qaUnrelatedChildId'].forEach(k=>pm.collectionVariables.unset(k));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('ID батька',()=>pm.expect(d.id).to.be.above(0));",
+                  "pm.collectionVariables.set('qaRoleParentId', String(d.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "58 · POST /parents — опікун для рольового акаунта",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/parents",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Role Guardian {{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('ID опікуна',()=>pm.expect(d.id).to.be.above(0));",
+                  "pm.collectionVariables.set('qaRoleGuardianId', String(d.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "59 · POST /users — створити manager → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaManagerLogin}}\",\"password\":\"{{qaRolePassword}}\",\"role\":\"manager\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('qaManagerLogin', 'qa_manager_' + pm.collectionVariables.get('qaRoleSuffix'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('Створено рольовий акаунт',()=>{ pm.expect(d.role).to.eql('manager'); pm.expect(d.login).to.eql(pm.collectionVariables.get('qaManagerLogin')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "60 · POST /users — створити parent → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaParentLogin}}\",\"password\":\"{{qaRolePassword}}\",\"role\":\"parent\",\"parentId\":{{qaRoleParentId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('qaParentLogin', 'qa_parent_' + pm.collectionVariables.get('qaRoleSuffix'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('Створено рольовий акаунт',()=>{ pm.expect(d.role).to.eql('parent'); pm.expect(d.login).to.eql(pm.collectionVariables.get('qaParentLogin')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "61 · POST /users — створити guardian → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaGuardianLogin}}\",\"password\":\"{{qaRolePassword}}\",\"role\":\"parent\",\"parentId\":{{qaRoleGuardianId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('qaGuardianLogin', 'qa_guardian_' + pm.collectionVariables.get('qaRoleSuffix'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('Створено рольовий акаунт',()=>{ pm.expect(d.role).to.eql('parent'); pm.expect(d.login).to.eql(pm.collectionVariables.get('qaGuardianLogin')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "62 · POST /auth/login — manager → {{managerToken}}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaManagerLogin}}\",\"password\":\"{{qaRolePassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const d=pm.response.json();",
+                  "pm.test('JWT збережений для ролі',()=>{ pm.expect(d.token).to.be.a('string').and.not.empty; pm.expect(d.user.role).to.eql('manager'); pm.environment.set('managerToken',d.token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "63 · POST /auth/login — parent → {{parentToken}}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaParentLogin}}\",\"password\":\"{{qaRolePassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const d=pm.response.json();",
+                  "pm.test('JWT збережений для ролі',()=>{ pm.expect(d.token).to.be.a('string').and.not.empty; pm.expect(d.user.role).to.eql('parent'); pm.environment.set('parentToken',d.token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "64 · POST /auth/login — parent → {{guardianToken}}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"login\":\"{{qaGuardianLogin}}\",\"password\":\"{{qaRolePassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const d=pm.response.json();",
+                  "pm.test('JWT збережений для ролі',()=>{ pm.expect(d.token).to.be.a('string').and.not.empty; pm.expect(d.user.role).to.eql('parent'); pm.environment.set('guardianToken',d.token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "65 · POST /children — дитина основного представника з опікуном",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Role Child {{$guid}}\",\"birthDate\":\"{{qaBirthDate}}\",\"parentId\":{{qaRoleParentId}},\"guardianIds\":[{{qaRoleGuardianId}}],\"isActive\":true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('Дитина доступна обом представникам',()=>{ pm.expect(d.parents).to.have.lengthOf(2); pm.collectionVariables.set('qaRoleChildId',String(d.id)); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "66 · POST /children — чужа дитина для перевірки 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Unrelated Child {{$guid}}\",\"birthDate\":\"{{qaBirthDate}}\",\"parentId\":{{qaPrimaryParentId}},\"isActive\":true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d=pm.response.json();",
+                  "pm.test('Збережений ID чужої дитини',()=>{ pm.expect(d.id).to.be.above(0); pm.collectionVariables.set('qaUnrelatedChildId',String(d.id)); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08B — Бонус: права manager, батька й опікуна",
+      "description": "Проводяться після 08A та до очищення 09. Очікувані 403/404 маскування чужих даних.",
+      "item": [
+        {
+          "name": "67 · manager DELETE /groups/:id → 403",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/groups/{{qaGroupId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Видалення групи заборонено менеджеру',()=>pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "68 · manager DELETE /children/:id → 403",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Видалення дитини заборонено менеджеру',()=>pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "69 · parent GET /children — лише свої діти",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Батько бачить лише свою дитину',()=>{ const a=pm.response.json(); pm.expect(a).to.be.an('array').with.lengthOf(1); pm.expect(String(a[0].id)).to.eql(pm.collectionVariables.get('qaRoleChildId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "70 · parent GET /children/:id — своя → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Доступ до своєї дитини',()=>pm.expect(String(pm.response.json().id)).to.eql(pm.collectionVariables.get('qaRoleChildId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "71 · parent GET /children/:id — чужа → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaUnrelatedChildId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Існування чужої дитини не розкривається',()=>pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "72 · parent PATCH /children/:id — змінити notes → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"QA note updated by parent\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Батько змінив тільки notes',()=>{ const d=pm.response.json(); pm.expect(d.notes).to.eql('QA note updated by parent'); pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaRoleChildId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "73 · parent PATCH /children/:id — змінити fullName → 403",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Not Permitted\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Заборонено змінювати ПІБ',()=>pm.expect(pm.response.json().error).to.include('notes'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "74 · guardian GET /children/:id — бачить підопічного → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{guardianToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Опікун бачить підопічного',()=>pm.expect(String(pm.response.json().id)).to.eql(pm.collectionVariables.get('qaRoleChildId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "75 · guardian GET /children/:id/invoice → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}/invoice",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{guardianToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Рахунок лише основному представнику',()=>pm.expect(pm.response.json().error).to.include('лише основному'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "76 · parent GET /children/:id/invoice → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}/invoice",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Основний представник бачить рахунок',()=>pm.expect(pm.response.json().childId).to.eql(Number(pm.collectionVariables.get('qaRoleChildId'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "77 · POST /children — вік 1 рік/років → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Bad Age 1 {{$guid}}\",\"birthDate\":\"{{qaAge1BirthDate}}\",\"parentId\":{{qaRoleParentId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date();",
+                  "const y = now.getUTCFullYear() - 1;",
+                  "const m = now.getUTCMonth();",
+                  "const day = Math.min(now.getUTCDate(), new Date(Date.UTC(y,m+1,0)).getUTCDate());",
+                  "pm.collectionVariables.set('qaAge1BirthDate', new Date(Date.UTC(y,m,day)).toISOString().slice(0,10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Вік поза діапазоном 2–5 років',()=>pm.expect(pm.response.json().error).to.include('Вік дитини'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "78 · POST /children — вік 7 рік/років → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/children",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Bad Age 7 {{$guid}}\",\"birthDate\":\"{{qaAge7BirthDate}}\",\"parentId\":{{qaRoleParentId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date();",
+                  "const y = now.getUTCFullYear() - 7;",
+                  "const m = now.getUTCMonth();",
+                  "const day = Math.min(now.getUTCDate(), new Date(Date.UTC(y,m+1,0)).getUTCDate());",
+                  "pm.collectionVariables.set('qaAge7BirthDate', new Date(Date.UTC(y,m,day)).toISOString().slice(0,10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Вік поза діапазоном 2–5 років',()=>pm.expect(pm.response.json().error).to.include('Вік дитини'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08C — Бонус: очистка тестових дітей",
+      "description": "Забираємо дітей, але акаунти /users та їх батьків залишаються: API не має DELETE /users.",
+      "item": [
+        {
+          "name": "79 · DELETE /children — очистка qaRoleChildId → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaRoleChildId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "pm.test('Видалено тестову дитину',()=>pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaRoleChildId');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "80 · DELETE /children — очистка qaUnrelatedChildId → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/children/{{qaUnrelatedChildId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "pm.test('Видалено тестову дитину',()=>pm.expect(pm.response.text()).to.eql(''));",
+                  "pm.collectionVariables.unset('qaUnrelatedChildId');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "09 — Очистка QA-даних",
       "description": "Увага: виконуйте після 05–08. Видалення в зворотному порядку залежностей: дитина, група, батьки.",
       "item": [
@@ -2407,7 +3365,7 @@
     },
     {
       "name": "10 — Авторизація: негативні 401/403",
-      "description": "Виконувати лише після інтеграції JWT. 401 без/з невалідним токеном і при неправильному паролі; 403 для ролі parent/teacher з окремим тестовим токеном restrictedToken. Якщо restrictedToken порожній — 403 запит буде SKIPPED, а не Passed.",
+      "description": "Після 08A: 401 без/з невалідним токеном; 403 для parentToken, який автоматично отримано через POST /users та Login parent.",
       "item": [
         {
           "name": "401 — GET /parents без токена",
@@ -2526,7 +3484,7 @@
           ]
         },
         {
-          "name": "403 — GET /employees під роллю parent або teacher",
+          "name": "403 — GET /employees із parentToken (автоматично)",
           "request": {
             "method": "GET",
             "header": [
@@ -2536,31 +3494,19 @@
               }
             ],
             "url": "{{baseUrl}}/employees",
-            "description": "У restrictedToken внесіть JWT ролі parent/teacher з тестового акаунта. Якщо його немає, запит пропускається — це НЕ Passed 403.",
+            "description": "Використовує parentToken, автоматично отриманий у папці 08A. Очікується 403.",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{restrictedToken}}",
+                  "value": "{{parentToken}}",
                   "type": "string"
                 }
               ]
             }
           },
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (!pm.environment.get('restrictedToken')) {",
-                  "    console.warn('SKIP 403: Заповніть restrictedToken JWT користувача з роллю parent/teacher.');",
-                  "    pm.execution.skipRequest();",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -2574,7 +3520,8 @@
                 ]
               }
             }
-          ]
+          ],
+          "description": "Токен parentToken автоматично створюється папкою 08A; вручну вводити restrictedToken не потрібно."
         },
         {
           "name": "401 — GET /groups без токена",
@@ -2668,6 +3615,166 @@
             }
           ],
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "11 — Бонус: ліміт 30 груп (автоматична підготовка й очистка)",
+      "description": "Виконуй лише після стандартної очистки 09. Перший GET створить рівно стільки додаткових QA-груп, щоб у SQLite стало 30. Наступний POST перевіряє 409 саме через ліміт. Останній GET видаляє тільки створені під час тесту групи. Не переривайте прогін до завершення очистки.",
+      "item": [
+        {
+          "name": "81 · GET /groups — доповнити базу до 30 QA-груп",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/groups"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET /groups → 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "const existing = pm.response.json();",
+                  "pm.test('Груп не більше 30', () => pm.expect(existing.length).to.be.at.most(30));",
+                  "const needed = Math.max(0, 30 - existing.length);",
+                  "const created = [];",
+                  "const baseUrl = pm.environment.get('baseUrl');",
+                  "const token = pm.environment.get('token');",
+                  "const prefix = 'QA_LIMIT_' + pm.variables.replaceIn('{{$guid}}').replace(/-/g,'');",
+                  "pm.collectionVariables.set('qaLimitIds', '[]');",
+                  "pm.collectionVariables.set('qaLimitRunPrefix', prefix);",
+                  "function next(i) {",
+                  "  if (i >= needed) {",
+                  "    pm.test('Підготовлено рівно 30 груп', () => pm.expect(existing.length + created.length).to.eql(30));",
+                  "    return;",
+                  "  }",
+                  "  pm.sendRequest({",
+                  "    url: baseUrl + '/groups', method:'POST',",
+                  "    header: [{key:'Authorization',value:'Bearer '+token},{key:'Content-Type',value:'application/json'}],",
+                  "    body: {mode:'raw',raw:JSON.stringify({name:prefix+'_'+i,ageCategory:3,capacity:1})}",
+                  "  }, (err,res)=>{",
+                  "    let id=null;",
+                  "    try {if (!err && res.code===201) id=res.json().id;} catch (_) {}",
+                  "    pm.test('Підготовка групи '+(i+1)+'/'+needed+' → 201',()=>{",
+                  "      pm.expect(err).to.equal(null); pm.expect(res.code).to.eql(201); pm.expect(id).to.be.a('number').above(0);",
+                  "    });",
+                  "    if (id != null) {",
+                  "      created.push(id);",
+                  "      pm.collectionVariables.set('qaLimitIds', JSON.stringify(created));",
+                  "      next(i+1);",
+                  "    }",
+                  "  });",
+                  "}",
+                  "next(0);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "82 · POST /groups — 31-ша група → 409 (ліміт)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/groups",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA_LIMIT_OVER_{{$guid}}\",\"ageCategory\":3,\"capacity\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Саме ліміт 30 груп, а не дубль назви',()=>pm.expect(pm.response.json().error).to.include('ліміт'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "83 · GET /groups — видалити лише створені QA-групи",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/groups"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET /groups → 200', () => pm.response.to.have.status(200));",
+                  "const raw = pm.collectionVariables.get('qaLimitIds') || '[]';",
+                  "let ids = [];",
+                  "try {ids=JSON.parse(raw);} catch(e) {pm.test('Список ID валідний',()=>{throw e;});}",
+                  "const baseUrl = pm.environment.get('baseUrl');",
+                  "const token = pm.environment.get('token');",
+                  "function removeAt(i) {",
+                  "  if (i >= ids.length) {",
+                  "    pm.collectionVariables.unset('qaLimitIds');",
+                  "    pm.collectionVariables.unset('qaLimitRunPrefix');",
+                  "    pm.test('Усі QA-групи цього прогону прибрано',()=>pm.expect(i).to.eql(ids.length));",
+                  "    return;",
+                  "  }",
+                  "  pm.sendRequest({url:baseUrl+'/groups/'+ids[i], method:'DELETE', header:[{key:'Authorization',value:'Bearer '+token}]}, (err,res)=>{",
+                  "    pm.test('Очистка групи '+ids[i]+' → 204',()=>{ pm.expect(err).to.equal(null); pm.expect(res.code).to.eql(204); });",
+                  "    if (err || res.code!==204) return;",
+                  "    removeAt(i+1);",
+                  "  });",
+                  "}",
+                  "removeAt(0);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "12 — Бонус: очистка тимчасових токенів",
+      "item": [
+        {
+          "name": "84 · GET /api/health — прибрати рольові токени й пароль",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+                  "['managerToken','parentToken','guardianToken','qaRolePassword'].forEach(k=>pm.environment.unset(k));",
+                  "pm.test('Рольові токени та тестовий пароль очищені',()=>{",
+                  "  ['managerToken','parentToken','guardianToken','qaRolePassword'].forEach(k=>pm.expect(pm.environment.get(k)).to.be.undefined);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
