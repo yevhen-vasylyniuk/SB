@@ -3371,6 +3371,145 @@ app.get('/admin/profit', authenticate, requireRole('admin'), (req, res) => {
     }
 });
 
+// --- ПРОГНОЗ ПРИБУТКУ (бонус ТЗ, етап 4) ---
+// Симуляція для заданої кількості дітей без запису в БД. Припущення:
+// діти розподіляються по групах рівномірно; на кожну групу припадає одна базова
+// кімната, вихователь і помічник; на кожну дисципліну один викладач і один
+// спеціалізований зал; доходом вважається лише навчання (як у звітах прибутку).
+const FORECAST_MAX_GROUPS = 30;
+const FORECAST_MAX_CHILDREN = 600;
+
+function calcForecast({ children, age, groupSize, discountPercent, paymentPlan, disciplines }) {
+    const groups = Math.ceil(children / groupSize);
+
+    if (groups > FORECAST_MAX_GROUPS) {
+        return { tooManyGroups: true, groups };
+    }
+
+    const base = Math.floor(children / groups);
+    const extra = children % groups;
+    const sizes = [];
+
+    for (let i = 0; i < groups; i++) {
+        sizes.push(i < extra ? base + 1 : base);
+    }
+
+    const tuitionPerChild = calcTuition({ discountPercent, paymentPlan }).perMonth;
+    const income = children * tuitionPerChild;
+
+    const baseRooms = groups;
+    const specializedRooms = disciplines;
+    const totalRooms = baseRooms + specializedRooms;
+
+    const rent = totalRooms * CONFIG.ROOM_RENT;
+    const manager = CONFIG.MANAGER_SALARY;
+    const teachers = disciplines * CONFIG.TEACHER_SALARY;
+    const educators = sizes.reduce((sum, n) => sum + calcEducatorSalary(n), 0);
+    const assistants = sizes.reduce((sum, n) => sum + calcAssistantSalary(n), 0);
+    const expensesTotal = rent + manager + teachers + educators + assistants;
+
+    return {
+        input: { children, age, groupSize, discountPercent, paymentPlan },
+        groups: {
+            count: groups,
+            minSize: Math.min(...sizes),
+            maxSize: Math.max(...sizes)
+        },
+        teachers: disciplines,
+        rooms: { base: baseRooms, specialized: specializedRooms, total: totalRooms },
+        income,
+        expenses: {
+            rent,
+            manager,
+            teachers,
+            educators,
+            assistants,
+            total: expensesTotal
+        },
+        netProfit: income - expensesTotal
+    };
+}
+
+// GET /admin/forecast?children=150&age=5&groupSize=20&discountPercent=0&paymentPlan=monthly
+app.get('/admin/forecast', authenticate, requireRole('admin'), (req, res) => {
+    const readInt = (value, fallback, min, max) => {
+        if (value === undefined) {
+            return fallback;
+        }
+
+        if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+            return null;
+        }
+
+        const number = Number(value);
+
+        return number >= min && number <= max ? number : null;
+    };
+
+    const children = readInt(req.query.children, null, 1, FORECAST_MAX_CHILDREN);
+    const age = readInt(req.query.age, 5, 2, 5);
+    const groupSize = readInt(req.query.groupSize, CONFIG.GROUP_MAX_CHILDREN, 1, CONFIG.GROUP_MAX_CHILDREN);
+    const discountPercent = readInt(req.query.discountPercent, 0, 0, 30);
+    const paymentPlan = req.query.paymentPlan === undefined ? 'monthly' : req.query.paymentPlan;
+
+    if (children === null) {
+        return res.status(400).json({
+            error: `Параметр children обов'язковий: ціле число від 1 до ${FORECAST_MAX_CHILDREN}`
+        });
+    }
+
+    if (age === null) {
+        return res.status(400).json({ error: 'Параметр age має бути цілим числом від 2 до 5' });
+    }
+
+    if (groupSize === null) {
+        return res.status(400).json({
+            error: `Параметр groupSize має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`
+        });
+    }
+
+    if (discountPercent === null || !CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(discountPercent)) {
+        return res.status(400).json({ error: 'Параметр discountPercent має бути 0, 10, 20 або 30' });
+    }
+
+    if (paymentPlan !== 'monthly' && paymentPlan !== 'yearly') {
+        return res.status(400).json({ error: 'Параметр paymentPlan має бути monthly або yearly' });
+    }
+
+    const disciplines = db.prepare('SELECT COUNT(*) AS count FROM activities').get().count || 5;
+    const options = { children, age, groupSize, discountPercent, paymentPlan, disciplines };
+    const forecast = calcForecast(options);
+
+    if (forecast.tooManyGroups) {
+        return res.status(400).json({
+            error: `Для ${children} дітей по ${groupSize} у групі потрібно ${forecast.groups} груп, а максимум ${FORECAST_MAX_GROUPS}`
+        });
+    }
+
+    // Мінімальна кількість дітей, за якої прогноз виходить у плюс при тих самих умовах.
+    let breakEvenChildren = null;
+
+    for (let n = 1; n <= FORECAST_MAX_GROUPS * groupSize; n++) {
+        const result = calcForecast({ ...options, children: n });
+
+        if (!result.tooManyGroups && result.netProfit >= 0) {
+            breakEvenChildren = n;
+            break;
+        }
+    }
+
+    // Порівняння груп по 12 і по 20 дітей для тієї самої кількості дітей.
+    const comparison = [12, 20].map((size) => {
+        const result = calcForecast({ ...options, groupSize: size });
+
+        return result.tooManyGroups
+            ? { groupSize: size, error: `потрібно ${result.groups} груп, максимум ${FORECAST_MAX_GROUPS}` }
+            : { groupSize: size, groups: result.groups.count, rooms: result.rooms.total, netProfit: result.netProfit };
+    });
+
+    return res.status(200).json({ ...forecast, breakEvenChildren, comparison });
+});
+
 // ==========================================
 // 7. ОБРОБКА ПОМИЛОК
 // ==========================================
