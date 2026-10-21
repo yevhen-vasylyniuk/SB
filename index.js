@@ -2479,12 +2479,6 @@ app.get(
 // РОЗКЛАД
 // ==========================================
 
-// --- ТИМЧАСОВА ЗАГЛУШКА (від Громова) ---
-function findScheduleConflict(slot, ignoreId) { 
-    return null; 
-}
-// ----------------------------------------
-
 function generateScheduleLogic() {
     const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
     const activities = db.prepare('SELECT * FROM activities LIMIT 5').all();
@@ -2544,14 +2538,21 @@ app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (
     }
 });
 
-// 2. Отримати розклад для групи (ТЗ: батьки - своя дитина, вчителі - свої групи, admin/manager - всі)
+// 2. Отримати розклад для групи (ТЗ: батьки - своя дитина (і за children.parentId, і за child_parents), вчителі - свої групи, admin/manager - всі)
 app.get('/groups/:id/schedule', authenticate, (req, res) => {
     const groupId = Number(req.params.id);
 
     // Перевірка прав доступу за ТЗ
     if (req.user.role === 'parent') {
-        // Батько бачить тільки групу своєї дитини
-        const childInGroup = db.prepare('SELECT 1 FROM children WHERE parentId = ? AND groupId = ? LIMIT 1').get(req.user.parentId, groupId);
+        // Батько бачить тільки групу своєї дитини (перевірка і за прямою колонкою, і за таблицею опікунів)
+        const childInGroup = db.prepare(`
+            SELECT 1 
+            FROM children c
+            LEFT JOIN child_parents cp ON c.id = cp.childId
+            WHERE (c.parentId = ? OR cp.parentId = ?) AND c.groupId = ? 
+            LIMIT 1
+        `).get(req.user.parentId, req.user.parentId, groupId);
+        
         if (!childInGroup) {
             return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
         }
@@ -2671,12 +2672,6 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
 // ==========================================
 // ПРИБУТОК
 // ==========================================
-
-// --- ТИМЧАСОВІ ЗАГЛУШКИ (від Петра) ---
-function calcTuition(child) { return { perMonth: 15000, perYear: 180000 }; }
-function calcEducatorSalary(kidsCount) { return 39000; }
-function calcAssistantSalary(kidsCount) { return 29000; }
-// --------------------------------------
 
 // --- ЧИСТІ ФУНКЦІЇ ДЛЯ РОЗРАХУНКУ ПРИБУТКУ ---
 function calcGroupProfit(groupId) {
