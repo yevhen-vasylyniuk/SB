@@ -1081,6 +1081,10 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
 // 4. ДІТИ ТА ГРУПИ
 // ==========================================
 const ENFORCE_AGE_MATCH = true;
+const MAX_GROUPS = 30; // максимум груп у садку
+const MIN_CHILD_AGE = 2; // допустимий вік дитини (повних років)
+const MAX_CHILD_AGE = 5;
+const MAX_GUARDIANS = 9; // максимум додаткових опікунів
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS child_parents (
@@ -1516,6 +1520,14 @@ app.post('/groups', authenticate, requireRole('admin', 'manager'), (req, res) =>
         return res.status(400).json({ error });
     }
 
+    const { total } = db.prepare('SELECT COUNT(*) AS total FROM groups').get();
+
+    if (total >= MAX_GROUPS) {
+        return res.status(409).json({
+            error: `Досягнуто ліміт кількості груп (${MAX_GROUPS})`,
+        });
+    }
+
     const group = {
         name: data.name.trim(),
         ageCategory: data.ageCategory,
@@ -1666,7 +1678,7 @@ app.patch(
 app.delete(
     '/groups/:id',
     authenticate,
-    requireRole('admin', 'manager'),
+    requireRole('admin'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -1718,12 +1730,12 @@ function validateChild(data, isUpdate) {
     ];
 
     if (!isUpdate) {
-        allowed.push('parentIds');
+        allowed.push('parentId', 'guardianIds');
     }
 
     for (const field of Object.keys(data)) {
         if (!allowed.includes(field)) {
-            return field === 'parentIds'
+            return field === 'parentId' || field === 'guardianIds'
                 ? 'Представників змінюйте через PUT /children/:id/parents'
                 : `Невідоме поле: ${field}`;
         }
@@ -1742,6 +1754,12 @@ function validateChild(data, isUpdate) {
 
         if (data.birthDate > new Date().toISOString().slice(0, 10)) {
             return 'Дата народження не може бути в майбутньому';
+        }
+
+        const age = calcAge(data.birthDate);
+
+        if (age < MIN_CHILD_AGE || age > MAX_CHILD_AGE) {
+            return `Вік дитини має бути від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE} років (зараз ${age})`;
         }
     }
 
@@ -1785,36 +1803,41 @@ function validateChild(data, isUpdate) {
     return null;
 }
 
-function validateParentIds(parentIds) {
-    if (
-        !Array.isArray(parentIds) ||
-        parentIds.length === 0 ||
-        parentIds.length > 10
-    ) {
+// Основний представник (платник) і необов’язкові додаткові опікуни
+function validateParentLinks(parentId, guardianIds) {
+    if (!isPositiveInt(parentId)) {
         return {
             status: 400,
-            error: 'parentIds має бути непорожнім масивом (до 10 елементів)',
+            error: 'parentId обов’язковий і має бути додатним цілим числом',
         };
     }
 
-    if (
-        !parentIds.every(isPositiveInt) ||
-        new Set(parentIds).size !== parentIds.length
-    ) {
+    const extra = guardianIds ?? [];
+
+    if (!Array.isArray(extra) || extra.length > MAX_GUARDIANS) {
         return {
             status: 400,
-            error: 'parentIds мають бути унікальними додатними цілими числами',
+            error: `guardianIds має бути масивом (до ${MAX_GUARDIANS} елементів)`,
+        };
+    }
+
+    const all = [parentId, ...extra];
+
+    if (!extra.every(isPositiveInt) || new Set(all).size !== all.length) {
+        return {
+            status: 400,
+            error: 'guardianIds мають бути унікальними додатними цілими числами і не містити parentId',
         };
     }
 
     const { cnt } = db
         .prepare(
             `SELECT COUNT(*) AS cnt FROM parents
-             WHERE id IN (${parentIds.map(() => '?').join(',')})`,
+             WHERE id IN (${all.map(() => '?').join(',')})`,
         )
-        .get(...parentIds);
+        .get(...all);
 
-    if (cnt !== parentIds.length) {
+    if (cnt !== all.length) {
         return {
             status: 400,
             error: 'Одного або кількох представників не знайдено',
@@ -1959,7 +1982,10 @@ app.post(
             return res.status(400).json({ error });
         }
 
-        const parentsError = validateParentIds(data.parentIds);
+        const parentsError = validateParentLinks(
+            data.parentId,
+            data.guardianIds,
+        );
 
         if (parentsError) {
             return res
@@ -2004,7 +2030,7 @@ app.post(
                     .run(
                         data.fullName.trim(),
                         data.birthDate,
-                        data.parentIds[0],
+                        data.parentId,
                         groupId,
                         data.discountPercent ?? 0,
                         data.paymentPlan ?? 'monthly',
@@ -2017,7 +2043,10 @@ app.post(
                     'INSERT INTO child_parents (childId, parentId) VALUES (?, ?)',
                 );
 
-                for (const parentId of data.parentIds) {
+                for (const parentId of [
+                    data.parentId,
+                    ...(data.guardianIds ?? []),
+                ]) {
                     link.run(childId, parentId);
                 }
 
@@ -2037,10 +2066,11 @@ app.post(
 );
 
 // PATCH /children/:id (включно з призначенням у групу через groupId)
+// admin/manager: усі поля; parent: лише notes своєї дитини
 app.patch(
     '/children/:id',
     authenticate,
-    requireRole('admin', 'manager'),
+    requireRole('admin', 'manager', 'parent'),
     (req, res) => {
         const id = parseId(req.params.id);
 
@@ -2049,8 +2079,10 @@ app.patch(
         }
 
         const child = db.prepare('SELECT * FROM children WHERE id = ?').get(id);
+        const isParent = req.user.role === 'parent';
 
-        if (!child) {
+        // Чужу дитину батько не бачить: 404, щоб не розкривати її існування
+        if (!child || (isParent && !canViewChild(req.user, child))) {
             return res.status(404).json({ error: 'Дитину не знайдено' });
         }
 
@@ -2058,6 +2090,13 @@ app.patch(
 
         if (!isPlainObject(data) || Object.keys(data).length === 0) {
             return res.status(400).json({ error: 'Немає даних для оновлення' });
+        }
+
+        // Батько може змінювати лише notes своєї дитини
+        if (isParent && Object.keys(data).some((field) => field !== 'notes')) {
+            return res.status(403).json({
+                error: 'Батьки можуть змінювати лише поле notes',
+            });
         }
 
         const error = validateChild(data, true);
@@ -2139,8 +2178,8 @@ app.patch(
     },
 );
 
-// PUT /children/:id/parents - замінити список представників
-// Перший елемент parentIds стає основним представником.
+// PUT /children/:id/parents - замінити представників
+// parentId — основний представник (платник), guardianIds — додаткові опікуни.
 app.put(
     '/children/:id/parents',
     authenticate,
@@ -2166,7 +2205,10 @@ app.put(
             return res.status(400).json({ error: 'Некоректне тіло запиту' });
         }
 
-        const parentsError = validateParentIds(data.parentIds);
+        const parentsError = validateParentLinks(
+            data.parentId,
+            data.guardianIds,
+        );
 
         if (parentsError) {
             return res
@@ -2184,12 +2226,15 @@ app.put(
                     'INSERT INTO child_parents (childId, parentId) VALUES (?, ?)',
                 );
 
-                for (const parentId of data.parentIds) {
+                for (const parentId of [
+                    data.parentId,
+                    ...(data.guardianIds ?? []),
+                ]) {
                     link.run(id, parentId);
                 }
 
                 db.prepare('UPDATE children SET parentId = ? WHERE id = ?').run(
-                    data.parentIds[0],
+                    data.parentId,
                     id,
                 );
             })();
@@ -2209,7 +2254,7 @@ app.put(
 app.delete(
     '/children/:id',
     authenticate,
-    requireRole('admin', 'manager'),
+    requireRole('admin'),
     (req, res) => {
         const id = parseId(req.params.id);
 
