@@ -9,6 +9,25 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Тарифи й ставки з ТЗ (суми в цілих гривнях). Редагування через API це бонус.
+const CONFIG = {
+    BASE_TUITION_MONTH: 15000,
+    MONTHS_IN_YEAR: 12,
+    YEARLY_PLAN_DISCOUNT_PERCENT: 12,
+    ALLOWED_DISCOUNT_PERCENTS: [0, 10, 20, 30],
+    MEAL_PER_DAY: { 2: 300, 3: 400, 4: 500, 5: 600 },
+    WORK_DAYS_PER_MONTH: 20,
+    GROUP_MAX_CHILDREN: 20,
+    SALARY_BASE_CHILDREN: 12,
+    EDUCATOR_RATE_BASE: 2000,
+    EDUCATOR_RATE_OVER: 5000,
+    ASSISTANT_BASE_SALARY: 20000,
+    ASSISTANT_EXTRA_PER_CHILD: 3000,
+    MANAGER_SALARY: 80000,
+    TEACHER_SALARY: 40000,
+    ROOM_RENT: 50000
+};
+
 app.use(express.json());
 
 // ==========================================
@@ -1094,7 +1113,95 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
 // 6. РАХУНКИ ТА ПЛАТЕЖІ
 // ==========================================
 
-// Тут будуть фінансові операції.
+// Чисті функції розрахунку: без доступу до БД, лише цілі гривні.
+// Контракт описаний у PROJECT_TASKS.md. Некоректний вхід дає RangeError,
+// тому маршрути мають перевіряти дані до виклику.
+
+// calcTuition({ discountPercent, paymentPlan }) -> { perMonth, perYear }
+// perMonth це місячний еквівалент (для плану yearly це 1/12 річної суми),
+// саме він іде в розрахунок прибутку.
+function calcTuition(child) {
+    if (!child || typeof child !== 'object') {
+        throw new RangeError('calcTuition: очікується об\'єкт дитини');
+    }
+
+    const { discountPercent, paymentPlan } = child;
+
+    if (!CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(discountPercent)) {
+        throw new RangeError('calcTuition: некоректна знижка');
+    }
+
+    if (paymentPlan !== 'monthly' && paymentPlan !== 'yearly') {
+        throw new RangeError('calcTuition: некоректний план оплати');
+    }
+
+    const yearBase = Math.round(
+        CONFIG.BASE_TUITION_MONTH * CONFIG.MONTHS_IN_YEAR *
+        (100 - discountPercent) / 100
+    );
+
+    const perYear = paymentPlan === 'yearly'
+        ? Math.round(yearBase * (100 - CONFIG.YEARLY_PLAN_DISCOUNT_PERCENT) / 100)
+        : yearBase;
+
+    return {
+        perMonth: Math.round(perYear / CONFIG.MONTHS_IN_YEAR),
+        perYear
+    };
+}
+
+// calcMeals(age) -> { perDay, perMonth, perYear }
+// age визначає викликач: group.ageCategory, а без групи повний вік за birthDate.
+// Пільги на харчування не діють, у прибуток садка воно не входить.
+function calcMeals(age) {
+    if (!Number.isInteger(age) || CONFIG.MEAL_PER_DAY[age] === undefined) {
+        throw new RangeError('calcMeals: вік має бути цілим числом від 2 до 5');
+    }
+
+    const perDay = CONFIG.MEAL_PER_DAY[age];
+    const perMonth = perDay * CONFIG.WORK_DAYS_PER_MONTH;
+
+    return {
+        perDay,
+        perMonth,
+        perYear: perMonth * CONFIG.MONTHS_IN_YEAR
+    };
+}
+
+function assertKidsCount(kidsCount, fnName) {
+    if (
+        !Number.isInteger(kidsCount) ||
+        kidsCount < 0 ||
+        kidsCount > CONFIG.GROUP_MAX_CHILDREN
+    ) {
+        throw new RangeError(
+            `${fnName}: кількість дітей має бути цілим числом від 0 до ${CONFIG.GROUP_MAX_CHILDREN}`
+        );
+    }
+}
+
+// calcEducatorSalary(kidsCount) -> зарплата вихователя за місяць
+// 2 000 за кожну з перших 12 дітей, 5 000 за кожну з 13-ї по 20-ту.
+function calcEducatorSalary(kidsCount) {
+    assertKidsCount(kidsCount, 'calcEducatorSalary');
+
+    const base = Math.min(kidsCount, CONFIG.SALARY_BASE_CHILDREN);
+    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
+
+    return base * CONFIG.EDUCATOR_RATE_BASE + over * CONFIG.EDUCATOR_RATE_OVER;
+}
+
+// calcAssistantSalary(kidsCount) -> зарплата помічника за місяць
+// 20 000 плюс 3 000 за кожну дитину з 13-ї по 20-ту.
+function calcAssistantSalary(kidsCount) {
+    assertKidsCount(kidsCount, 'calcAssistantSalary');
+
+    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
+
+    return CONFIG.ASSISTANT_BASE_SALARY + over * CONFIG.ASSISTANT_EXTRA_PER_CHILD;
+}
+
+// Далі тут буде GET /children/:id/invoice (після злиття дітей і груп).
 
 
 // ==========================================
