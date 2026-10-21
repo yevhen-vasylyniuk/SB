@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "e74aa11d-d5b0-4721-bd0f-c361873814a7",
     "name": "Kindergarten API — QA dev + bonus role tests",
-    "description": "QA для API дитячого садка: health, parents/employees/groups/children CRUD, опікуни, рахунок, JWT. Бонус: admin створює manager, parent і guardian через POST /users, токени отримуються POST /auth/login; перевірки 403 на DELETE manager, parent notes/own-only, guardian invoice, вік 1/7 → 400, ліміт 30 груп → 409. Запускайте папки послідовно, починаючи з 00; 08A–08C перед 09, потім 10–12. Тестова база обов’язкова: API не має DELETE /users, тому створені користувачі залишаються. Рольові токени/пароль зберігаються тільки в локальному environment, експорт у Git — виключно очищений. Інструкції: BONUS_README.md.",
+    "description": "QA для API дитячого садка: health, parents/employees/groups/children CRUD, опікуни, рахунок, JWT. Бонус: admin створює manager, parent і guardian через POST /users, токени отримуються POST /auth/login; перевірки 403 на DELETE manager, parent notes/own-only, guardian invoice, вік 1/7 → 400, ліміт 30 груп → 409. Запускайте папки послідовно, починаючи з 00; 08A–08C перед 09, потім 10–12. Тестова база обов’язкова: API не має DELETE /users, тому створені користувачі залишаються. Рольові токени/пароль зберігаються тільки в локальному environment, експорт у Git — виключно очищений. Інструкції: BONUS_README.md. Папки 11A–11E (перед очисткою токенів): кімнати, дисципліни, розклад (генерація, перегляд, редагування, права), прибуток групи й садка та прогноз прибутку. Папка 11C створює викладачів, зали й групи; після генерації групи не видаляються, тому кожен запуск додає 2 групи (користуйтеся тестовою базою).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -3751,6 +3751,3130 @@
       ]
     },
     {
+      "name": "11A — Кімнати: CRUD, валідація, права",
+      "description": "CRUD для /rooms. Кімната qaRoomId і зал qaHallId потрібні наступній папці 11B, яка їх і видаляє.",
+      "item": [
+        {
+          "name": "R1 · POST /rooms — базова кімната → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Base {{$guid}}\",\"type\":\"base\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Кімнату створено, оренда за замовчуванням 50000', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.id).to.be.a('number');",
+                  "    pm.expect(d.type).to.eql('base');",
+                  "    pm.expect(d.rent).to.eql(50000);",
+                  "    pm.collectionVariables.set('qaRoomId', String(d.id));",
+                  "    pm.collectionVariables.set('qaRoomName', d.name);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R2 · POST /rooms — спеціалізований зал з орендою 60000 → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Hall {{$guid}}\",\"type\":\"specialized\",\"rent\":60000}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Зал створено з орендою 60000', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.type).to.eql('specialized');",
+                  "    pm.expect(d.rent).to.eql(60000);",
+                  "    pm.collectionVariables.set('qaHallId', String(d.id));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R3 · POST /rooms — дубль назви → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"{{qaRoomName}}\",\"type\":\"base\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R4 · POST /rooms — невідомий тип → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Bad {{$guid}}\",\"type\":\"garage\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R5 · POST /rooms — від’ємна оренда → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Neg {{$guid}}\",\"type\":\"base\",\"rent\":-1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R6 · POST /rooms — оренда рядком → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Str {{$guid}}\",\"type\":\"base\",\"rent\":\"50000\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R7 · GET /rooms — список → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Список містить створену кімнату', () => {",
+                  "    const list = pm.response.json();",
+                  "    pm.expect(list).to.be.an('array');",
+                  "    pm.expect(list.map(r => String(r.id))).to.include(pm.collectionVariables.get('qaRoomId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R8 · GET /rooms/:id → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Поля кімнати', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('qaRoomId'));",
+                  "    pm.expect(d).to.have.all.keys('id', 'name', 'type', 'rent');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R9 · GET /rooms/999999 → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/999999"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R10 · GET /rooms/abc → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/abc"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R11 · PATCH /rooms/:id — перейменування → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Base Renamed {{$guid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Назву змінено', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.name).to.include('Renamed');",
+                  "    pm.collectionVariables.set('qaRoomName', d.name);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R12 · PATCH /rooms/:id — невідоме поле → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"color\":\"red\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R13 · PATCH /rooms/:id — порожнє тіло → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R14 · manager GET /rooms → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R15 · manager DELETE /rooms/:id → 403",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R16 · parent GET /rooms → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "R17 · GET /rooms без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11B — Дисципліни: CRUD, зв’язки, очистка",
+      "description": "CRUD для /activities з перевіркою викладача й спеціалізованого залу. Наприкінці видаляє кімнати та працівників, створених у 11A і 11B.",
+      "item": [
+        {
+          "name": "A1 · POST /employees — викладач → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Teacher {{$guid}}\",\"position\":\"teacher\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('qaTeacherEmpId', String(pm.response.json().id));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A2 · POST /employees — вихователь → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fullName\":\"QA Educator {{$guid}}\",\"position\":\"educator\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('qaEducatorEmpId', String(pm.response.json().id));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A3 · POST /activities — викладач і зал → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Activity {{$guid}}\",\"teacherId\":{{qaTeacherEmpId}},\"roomId\":{{qaHallId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Дисципліну створено зі зв’язками', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(String(d.teacherId)).to.eql(pm.collectionVariables.get('qaTeacherEmpId'));",
+                  "    pm.expect(String(d.roomId)).to.eql(pm.collectionVariables.get('qaHallId'));",
+                  "    pm.collectionVariables.set('qaActId', String(d.id));",
+                  "    pm.collectionVariables.set('qaActName', d.name);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A4 · POST /activities — дубль назви → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"{{qaActName}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A5 · POST /activities — вихователь як викладач → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Bad Teacher {{$guid}}\",\"teacherId\":{{qaEducatorEmpId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A6 · POST /activities — базова кімната замість залу → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Bad Room {{$guid}}\",\"roomId\":{{qaRoomId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A7 · POST /activities — невідомий викладач → 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Ghost T {{$guid}}\",\"teacherId\":999999}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A8 · POST /activities — невідомий зал → 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Ghost R {{$guid}}\",\"roomId\":999999}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A9 · POST /activities — teacherId рядком → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Str {{$guid}}\",\"teacherId\":\"2\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A10 · POST /activities — невідоме поле → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"QA Unknown {{$guid}}\",\"foo\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A11 · GET /activities — список → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Є 5 дисциплін із початкових даних і створена', () => {",
+                  "    const list = pm.response.json();",
+                  "    pm.expect(list.length).to.be.at.least(6);",
+                  "    pm.expect(list.map(a => String(a.id))).to.include(pm.collectionVariables.get('qaActId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A12 · GET /activities/:id → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/{{qaActId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A13 · GET /activities/999999 → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/999999"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A14 · PATCH /activities/:id — teacherId null → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/{{qaActId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"teacherId\":null}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Викладача знято', () => pm.expect(pm.response.json().teacherId).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A15 · PATCH /activities/:id — базова кімната → 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/{{qaActId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"roomId\":{{qaRoomId}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A16 · manager DELETE /activities/:id → 403",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/{{qaActId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A17 · parent GET /activities → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A18 · GET /activities без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A19 · DELETE /rooms/:id — зал використовується дисципліною → 409",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaHallId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A20 · DELETE /activities/:id — прибрати → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities/{{qaActId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A21 · DELETE /rooms/:id — зал → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaHallId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A22 · DELETE /rooms/:id — базова кімната → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/rooms/{{qaRoomId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A23 · DELETE /employees/:id — викладач → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaTeacherEmpId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "A24 · DELETE /employees/:id — вихователь → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/employees/{{qaEducatorEmpId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11C — Розклад: генерація, перегляд, редагування, права",
+      "description": "Перша дія створює викладачів, зали, групи й користувача-викладача, призначає їх 5 початковим дисциплінам. Після генерації розкладу групи не можна видалити (вони мають слоти), тому тестова база обов’язкова: кожен запуск додає 2 групи.",
+      "item": [
+        {
+          "name": "S0 · Підготовка: викладачі, зали, групи, користувач-викладач",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/activities",
+            "description": "Дані готує pre-request скрипт через pm.sendRequest."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const base = pm.variables.replaceIn('{{baseUrl}}');",
+                  "const admin = pm.environment.get('token');",
+                  "const call = (method, path, body, token) => new Promise((resolve, reject) => {",
+                  "    pm.sendRequest({",
+                  "        url: base + path,",
+                  "        method,",
+                  "        header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || admin) },",
+                  "        body: body ? { mode: 'raw', raw: JSON.stringify(body) } : undefined",
+                  "    }, (err, res) => {",
+                  "        if (err) return reject(err);",
+                  "        let data = null;",
+                  "        try { data = res.json(); } catch (e) { data = null; }",
+                  "        resolve({ status: res.code, data });",
+                  "    });",
+                  "});",
+                  "const uid = pm.variables.replaceIn('{{$guid}}').slice(0, 8);",
+                  "",
+                  "(async () => {",
+                  "    const teachers = [];",
+                  "    for (let i = 1; i <= 5; i++) {",
+                  "        const r = await call('POST', '/employees', { fullName: 'QA Sched Teacher ' + i + ' ' + uid, position: 'teacher' });",
+                  "        teachers.push(r.data.id);",
+                  "    }",
+                  "    const halls = [];",
+                  "    for (let i = 1; i <= 5; i++) {",
+                  "        const r = await call('POST', '/rooms', { name: 'QA Sched Hall ' + i + ' ' + uid, type: 'specialized' });",
+                  "        halls.push(r.data.id);",
+                  "    }",
+                  "    const acts = (await call('GET', '/activities')).data.slice().sort((a, b) => a.id - b.id).slice(0, 5);",
+                  "    for (let i = 0; i < 5; i++) await call('PATCH', '/activities/' + acts[i].id, { teacherId: teachers[i], roomId: halls[i] });",
+                  "    const g1 = await call('POST', '/groups', { name: 'QA Sched Group ' + uid, ageCategory: 5 });",
+                  "    const g2 = await call('POST', '/groups', { name: 'QA Sched Group B ' + uid, ageCategory: 4 });",
+                  "    const password = 'Qa-Sched-' + uid + '-Pw1!';",
+                  "    const login = 'qa-sched-teacher-' + uid;",
+                  "    await call('POST', '/users', { login, password, role: 'teacher', employeeId: teachers[0] });",
+                  "    const tok = await call('POST', '/auth/login', { login, password });",
+                  "    pm.environment.set('qaSchedTeacherToken', tok.data && tok.data.token ? tok.data.token : '');",
+                  "    pm.collectionVariables.set('qaSchedTeacher0', String(teachers[0]));",
+                  "    pm.collectionVariables.set('qaSchedTeacher1', String(teachers[1]));",
+                  "    pm.collectionVariables.set('qaSchedGroupId', String(g1.data.id));",
+                  "    pm.collectionVariables.set('qaSchedGroup2Id', String(g2.data.id));",
+                  "})();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Підготовка виконана: змінні й токен викладача', () => {",
+                  "    ['qaSchedTeacher0', 'qaSchedTeacher1', 'qaSchedGroupId', 'qaSchedGroup2Id'].forEach(k => pm.expect(pm.collectionVariables.get(k), k).to.be.a('string').and.not.empty);",
+                  "    pm.expect(pm.environment.get('qaSchedTeacherToken')).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('Усі 5 початкових дисциплін мають викладача й зал', () => {",
+                  "    const list = pm.response.json().slice().sort((a, b) => a.id - b.id).slice(0, 5);",
+                  "    list.forEach(a => { pm.expect(a.teacherId).to.be.a('number'); pm.expect(a.roomId).to.be.a('number'); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S1 · manager POST /schedules/generate → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/generate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S2 · GET /groups/:id/schedule — 5 уроків, по одному на день → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaSchedGroupId}}/schedule"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('5 уроків, дні 0-4, різні предмети, час у сітці 09:30-12:00', () => {",
+                  "    const s = pm.response.json();",
+                  "    pm.expect(s).to.have.lengthOf(5);",
+                  "    pm.expect(s.map(x => x.dayOfWeek)).to.eql([0, 1, 2, 3, 4]);",
+                  "    pm.expect(new Set(s.map(x => x.activityName)).size).to.eql(5);",
+                  "    s.forEach(x => pm.expect(['09:30', '10:00', '10:30', '11:00', '11:30', '12:00']).to.include(x.startTime));",
+                  "    s.forEach(x => pm.expect(x.durationMin).to.eql(30));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S3 · GET /teachers/:id/schedule → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/teachers/{{qaSchedTeacher0}}/schedule"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('У викладача є уроки з назвою групи', () => {",
+                  "    const s = pm.response.json();",
+                  "    pm.expect(s).to.be.an('array').that.is.not.empty;",
+                  "    s.forEach(x => pm.expect(x.groupName).to.be.a('string'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S4 · GET /groups/999999/schedule → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/999999/schedule"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S5 · PATCH /schedules/:id — на зайнятий час групи → 409 group_busy",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"{{qaSlotBTime}}\",\"dayOfWeek\":{{qaSlotBDay}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const base = pm.variables.replaceIn('{{baseUrl}}');",
+                  "const admin = pm.environment.get('token');",
+                  "const call = (method, path, body, token) => new Promise((resolve, reject) => {",
+                  "    pm.sendRequest({",
+                  "        url: base + path,",
+                  "        method,",
+                  "        header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || admin) },",
+                  "        body: body ? { mode: 'raw', raw: JSON.stringify(body) } : undefined",
+                  "    }, (err, res) => {",
+                  "        if (err) return reject(err);",
+                  "        let data = null;",
+                  "        try { data = res.json(); } catch (e) { data = null; }",
+                  "        resolve({ status: res.code, data });",
+                  "    });",
+                  "});",
+                  "const uid = pm.variables.replaceIn('{{$guid}}').slice(0, 8);",
+                  "",
+                  "(async () => {",
+                  "    const gid = pm.collectionVariables.get('qaSchedGroupId');",
+                  "    const sched = (await call('GET', '/groups/' + gid + '/schedule')).data;",
+                  "    pm.collectionVariables.set('qaSlotA', String(sched[0].id));",
+                  "    pm.collectionVariables.set('qaSlotB', String(sched[1].id));",
+                  "    pm.collectionVariables.set('qaSlotBTime', sched[1].startTime);",
+                  "    pm.collectionVariables.set('qaSlotBDay', String(sched[1].dayOfWeek));",
+                  "    const foreign = (await call('GET', '/teachers/' + pm.collectionVariables.get('qaSchedTeacher1') + '/schedule')).data;",
+                  "    pm.collectionVariables.set('qaForeignSlot', String(foreign[0].id));",
+                  "    // a free time on slot A's day: nobody of the same subject and not the group itself",
+                  "    const groups = (await call('GET', '/groups')).data;",
+                  "    const busy = new Set();",
+                  "    for (const g of groups) {",
+                  "        const s = (await call('GET', '/groups/' + g.id + '/schedule')).data;",
+                  "        if (!Array.isArray(s)) continue;",
+                  "        for (const x of s) {",
+                  "            if (x.dayOfWeek === sched[0].dayOfWeek && (x.activityName === sched[0].activityName || g.id === Number(gid))) busy.add(x.startTime);",
+                  "        }",
+                  "    }",
+                  "    const free = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'].find(t => !busy.has(t));",
+                  "    pm.collectionVariables.set('qaFreeTime', free || '');",
+                  "    pm.collectionVariables.set('qaSlotADay', String(sched[0].dayOfWeek));",
+                  "})();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Конфлікт: тип group_busy і слот, з яким збіглось', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.be.a('string');",
+                  "    pm.expect(d.type).to.eql('group_busy');",
+                  "    pm.expect(String(d.slotId)).to.eql(pm.collectionVariables.get('qaSlotB'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S6 · PATCH /schedules/:id — час 00:00 → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"00:00\",\"dayOfWeek\":0}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S7 · PATCH /schedules/:id — dayOfWeek = \"2\" → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"10:00\",\"dayOfWeek\":\"2\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S8 · PATCH /schedules/:id — dayOfWeek = 2.5 → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"10:00\",\"dayOfWeek\":2.5}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S9 · PATCH /schedules/:id — без dayOfWeek → 400",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"10:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S10 · PATCH /schedules/999999 → 404",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/999999",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"10:00\",\"dayOfWeek\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S11 · PATCH /schedules/:id — на вільний час → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaSlotA}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"{{qaFreeTime}}\",\"dayOfWeek\":{{qaSlotADay}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('qaFreeTime')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S12 · GET /groups/:id/schedule — новий час видно → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaSchedGroupId}}/schedule"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('qaFreeTime')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Урок перенесено', () => {",
+                  "    const slot = pm.response.json().find(x => String(x.id) === pm.collectionVariables.get('qaSlotA'));",
+                  "    pm.expect(slot.startTime).to.eql(pm.collectionVariables.get('qaFreeTime'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S13 · teacher GET свого розкладу → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/teachers/{{qaSchedTeacher0}}/schedule",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{qaSchedTeacherToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S14 · teacher GET розкладу іншого викладача → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/teachers/{{qaSchedTeacher1}}/schedule",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{qaSchedTeacherToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S15 · teacher PATCH чужого уроку → 403",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/{{qaForeignSlot}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"startTime\":\"12:00\",\"dayOfWeek\":0}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{qaSchedTeacherToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S16 · teacher POST /schedules/generate → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/generate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{qaSchedTeacherToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S17 · parent GET розкладу чужої групи → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaSchedGroup2Id}}/schedule",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S18 · parent POST /schedules/generate → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/generate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S19 · GET розкладу без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaSchedGroupId}}/schedule",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "S20 · POST /schedules/generate без токена → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/schedules/generate",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11D — Прибуток: група, садок, права",
+      "description": "Готує групу з 12 п’ятирічок без пільг (місячний план): за ТЗ прибуток групи 180 000 − (50 000 + 24 000 + 20 000) = 86 000. Наприкінці все прибирає.",
+      "item": [
+        {
+          "name": "P0 · Підготовка: група з 12 дітей",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const base = pm.variables.replaceIn('{{baseUrl}}');",
+                  "const admin = pm.environment.get('token');",
+                  "const call = (method, path, body, token) => new Promise((resolve, reject) => {",
+                  "    pm.sendRequest({",
+                  "        url: base + path,",
+                  "        method,",
+                  "        header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || admin) },",
+                  "        body: body ? { mode: 'raw', raw: JSON.stringify(body) } : undefined",
+                  "    }, (err, res) => {",
+                  "        if (err) return reject(err);",
+                  "        let data = null;",
+                  "        try { data = res.json(); } catch (e) { data = null; }",
+                  "        resolve({ status: res.code, data });",
+                  "    });",
+                  "});",
+                  "const uid = pm.variables.replaceIn('{{$guid}}').slice(0, 8);",
+                  "",
+                  "(async () => {",
+                  "    const g = await call('POST', '/groups', { name: 'QA Profit Group ' + uid, ageCategory: 5 });",
+                  "    const p = await call('POST', '/parents', { fullName: 'QA Profit Parent ' + uid });",
+                  "    const ids = [];",
+                  "    const d = new Date();",
+                  "    d.setFullYear(d.getFullYear() - 5);",
+                  "    d.setDate(d.getDate() - 30);",
+                  "    const birthDate = d.toISOString().slice(0, 10);",
+                  "    for (let i = 1; i <= 12; i++) {",
+                  "        const k = await call('POST', '/children', { fullName: 'QA Profit Kid ' + i + ' ' + uid, birthDate, parentId: p.data.id, groupId: g.data.id });",
+                  "        ids.push(k.data.id);",
+                  "    }",
+                  "    pm.collectionVariables.set('qaProfitGroupId', String(g.data.id));",
+                  "    pm.collectionVariables.set('qaProfitParentId', String(p.data.id));",
+                  "    pm.collectionVariables.set('qaProfitKids', JSON.stringify(ids));",
+                  "})();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Групу й 12 дітей створено', () => {",
+                  "    pm.expect(pm.collectionVariables.get('qaProfitGroupId')).to.be.a('string').and.not.empty;",
+                  "    pm.expect(JSON.parse(pm.collectionVariables.get('qaProfitKids'))).to.have.lengthOf(12);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P1 · GET /groups/:id/profit — 12 дітей → 86 000",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaProfitGroupId}}/profit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Дохід 180000, витрати 94000, прибуток 86000 (приклад із ТЗ)', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.childrenCount).to.eql(12);",
+                  "    pm.expect(d.income).to.eql(180000);",
+                  "    pm.expect(d.expenses).to.eql(94000);",
+                  "    pm.expect(d.netProfit).to.eql(86000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P2 · GET /groups/999999/profit → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/999999/profit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P3 · GET /groups/abc/profit → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/abc/profit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P4 · GET /admin/profit → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/profit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Структура й узгодженість прибутку садка', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.totalIncome).to.be.a('number');",
+                  "    pm.expect(d.totalExpenses).to.be.a('number');",
+                  "    pm.expect(d.totalNetProfit).to.eql(d.totalIncome - d.totalExpenses);",
+                  "    pm.expect(d.totalIncome).to.be.at.least(180000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P5 · manager GET /admin/profit → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/profit",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P6 · manager GET /groups/:id/profit → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaProfitGroupId}}/profit",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P7 · parent GET /admin/profit → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/profit",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P8 · GET /admin/profit без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/profit",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P9 · Очистка: DELETE /groups/:id — група прибутку → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/groups/{{qaProfitGroupId}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const base = pm.variables.replaceIn('{{baseUrl}}');",
+                  "const admin = pm.environment.get('token');",
+                  "const call = (method, path, body, token) => new Promise((resolve, reject) => {",
+                  "    pm.sendRequest({",
+                  "        url: base + path,",
+                  "        method,",
+                  "        header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || admin) },",
+                  "        body: body ? { mode: 'raw', raw: JSON.stringify(body) } : undefined",
+                  "    }, (err, res) => {",
+                  "        if (err) return reject(err);",
+                  "        let data = null;",
+                  "        try { data = res.json(); } catch (e) { data = null; }",
+                  "        resolve({ status: res.code, data });",
+                  "    });",
+                  "});",
+                  "const uid = pm.variables.replaceIn('{{$guid}}').slice(0, 8);",
+                  "",
+                  "(async () => {",
+                  "    const ids = JSON.parse(pm.collectionVariables.get('qaProfitKids') || '[]');",
+                  "    for (const id of ids) await call('DELETE', '/children/' + id);",
+                  "})();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "P10 · Очистка: DELETE /parents/:id — батько → 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/parents/{{qaProfitParentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11E — Прогноз прибутку (бонус)",
+      "description": "GET /admin/forecast для admin. Критерій ТЗ: 150 дітей по 5 років дають 8 груп, 5 викладачів, 13 кімнат, прибуток 536 000 (за умови 5 дисциплін у базі).",
+      "item": [
+        {
+          "name": "F1 · GET /admin/forecast?children=150 → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=150&age=5"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('8 груп, 5 викладачів, 13 кімнат', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.groups.count).to.eql(8);",
+                  "    pm.expect(d.teachers).to.eql(5);",
+                  "    pm.expect(d.rooms).to.eql({ base: 8, specialized: 5, total: 13 });",
+                  "});",
+                  "pm.test('Дохід 2250000, витрати 1714000, прибуток 536000', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.income).to.eql(2250000);",
+                  "    pm.expect(d.expenses.total).to.eql(1714000);",
+                  "    pm.expect(d.netProfit).to.eql(536000);",
+                  "    pm.expect(d.expenses.total).to.eql(d.expenses.rent + d.expenses.manager + d.expenses.teachers + d.expenses.educators + d.expenses.assistants);",
+                  "});",
+                  "pm.test('Є точка беззбитковості й порівняння груп 12 і 20', () => {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.breakEvenChildren).to.be.a('number').and.greaterThan(0);",
+                  "    pm.expect(d.comparison.map(x => x.groupSize)).to.eql([12, 20]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F2 · GET /admin/forecast — пільга 30% і річний план → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=12&groupSize=12&discountPercent=30&paymentPlan=yearly"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Дохід 12 × 9240', () => pm.expect(pm.response.json().income).to.eql(12 * 9240));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F3 · GET /admin/forecast без children → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F4 · children=0 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=0"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F5 · children=abc → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=abc"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F6 · children=601 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=601"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F7 · age=1 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10&age=1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F8 · groupSize=21 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10&groupSize=21"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F9 · discountPercent=15 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10&discountPercent=15"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F10 · paymentPlan=weekly → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10&paymentPlan=weekly"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F11 · понад 30 груп (500 дітей по 12) → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=500&groupSize=12"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F12 · manager → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{managerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F13 · parent → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{parentToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "F14 · без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/forecast?children=10",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Є поле error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "12 — Бонус: очистка тимчасових токенів",
       "item": [
         {
@@ -3770,7 +6894,8 @@
                   "['managerToken','parentToken','guardianToken','qaRolePassword'].forEach(k=>pm.environment.unset(k));",
                   "pm.test('Рольові токени та тестовий пароль очищені',()=>{",
                   "  ['managerToken','parentToken','guardianToken','qaRolePassword'].forEach(k=>pm.expect(pm.environment.get(k)).to.be.undefined);",
-                  "});"
+                  "});",
+                  "pm.environment.unset('qaSchedTeacherToken');"
                 ]
               }
             }
