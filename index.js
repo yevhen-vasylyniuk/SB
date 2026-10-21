@@ -2304,7 +2304,625 @@ app.delete(
 // 5. КІМНАТИ ТА ЗАНЯТТЯ
 // ==========================================
 
-// Тут будуть операції CRUD.
+app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    try {
+        const rooms = db.prepare(`
+            SELECT id, name, type, rent
+            FROM rooms
+            ORDER BY id ASC
+        `).all();
+
+        return res.status(200).json(rooms);
+    } catch (error) {
+        console.error('Failed to fetch rooms:', error);
+        return res.status(500).json({
+            error: 'Failed to fetch rooms'
+        });
+    }
+});
+
+app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid room ID'
+        });
+    }
+
+    try {
+        const room = db.prepare(`
+            SELECT id, name, type, rent
+            FROM rooms
+            WHERE id = ?
+        `).get(id);
+
+        if (!room) {
+            return res.status(404).json({
+                error: 'Room not found'
+            });
+        }
+
+        return res.status(200).json(room);
+    } catch (error) {
+        console.error('Failed to fetch room:', error);
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+
+app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const { name, type, rent = 50000 } = req.body || {};
+
+    if (
+        typeof name !== 'string' ||
+        !name.trim() ||
+        typeof type !== 'string' ||
+        !['base', 'specialized'].includes(type) ||
+        !Number.isSafeInteger(rent) ||
+        rent < 0
+    ) {
+        return res.status(400).json({
+            error: 'Invalid room data'
+        });
+    }
+
+    const normalizedName = name.trim();
+
+    try {
+        const result = db.prepare(`
+            INSERT INTO rooms (name, type, rent)
+            VALUES (?, ?, ?)
+        `).run(normalizedName, type, rent);
+
+        const room = db.prepare(`
+            SELECT id, name, type, rent
+            FROM rooms
+            WHERE id = ?
+        `).get(result.lastInsertRowid);
+
+        return res.status(201).json(room);
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Room with this name already exists'
+            });
+        }
+
+        console.error('Failed to create room:', error);
+
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+
+app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const body = req.body;
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Invalid room data' });
+    }
+
+    const allowedFields = ['name', 'type', 'rent'];
+    const fields = Object.keys(body);
+
+    if (
+        fields.length === 0 ||
+        fields.some(field => !allowedFields.includes(field))
+    ) {
+        return res.status(400).json({ error: 'Invalid room data' });
+    }
+
+    try {
+        const existing = db.prepare(`
+            SELECT id, name, type, rent
+            FROM rooms
+            WHERE id = ?
+        `).get(id);
+
+        if (!existing) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        const name = Object.hasOwn(body, 'name')
+            ? body.name
+            : existing.name;
+
+        const type = Object.hasOwn(body, 'type')
+            ? body.type
+            : existing.type;
+
+        const rent = Object.hasOwn(body, 'rent')
+            ? body.rent
+            : existing.rent;
+
+        if (
+            typeof name !== 'string' ||
+            !name.trim() ||
+            typeof type !== 'string' ||
+            !['base', 'specialized'].includes(type) ||
+            !Number.isSafeInteger(rent) ||
+            rent < 0
+        ) {
+            return res.status(400).json({ error: 'Invalid room data' });
+        }
+
+        // Не дозволяємо змінювати базову кімнату групи
+        // на спеціалізовану.
+        if (type === 'specialized') {
+            const group = db.prepare(`
+                SELECT id FROM groups WHERE roomId = ?
+            `).get(id);
+
+            if (group) {
+                return res.status(409).json({
+                    error: 'Room is assigned to a group'
+                });
+            }
+        }
+
+        // Кімната, призначена дисципліні, має залишатись
+        // спеціалізованою.
+        if (type === 'base') {
+            const activity = db.prepare(`
+                SELECT id FROM activities WHERE roomId = ?
+            `).get(id);
+
+            if (activity) {
+                return res.status(409).json({
+                    error: 'Room is assigned to an activity'
+                });
+            }
+        }
+
+        db.prepare(`
+            UPDATE rooms
+            SET name = ?, type = ?, rent = ?
+            WHERE id = ?
+        `).run(name.trim(), type, rent, id);
+
+        const updated = db.prepare(`
+            SELECT id, name, type, rent
+            FROM rooms
+            WHERE id = ?
+        `).get(id);
+
+        return res.status(200).json(updated);
+
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Room with this name already exists'
+            });
+        }
+
+        console.error('Failed to update room:', error);
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+
+app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    try {
+        const room = db.prepare(`
+            SELECT id FROM rooms WHERE id = ?
+        `).get(id);
+
+        if (!room) {
+            return res.status(404).json({
+                error: 'Room not found'
+            });
+        }
+
+        const usedByGroup = db.prepare(`
+            SELECT id FROM groups WHERE roomId = ?
+        `).get(id);
+
+        const usedByActivity = db.prepare(`
+            SELECT id FROM activities WHERE roomId = ?
+        `).get(id);
+
+        const usedBySchedule = db.prepare(`
+            SELECT id FROM schedule_slots WHERE roomId = ?
+        `).get(id);
+
+        if (usedByGroup || usedByActivity || usedBySchedule) {
+            return res.status(409).json({
+                error: 'Room is currently in use'
+            });
+        }
+
+        db.prepare(`
+            DELETE FROM rooms WHERE id = ?
+        `).run(id);
+
+        return res.status(204).send();
+
+    } catch (error) {
+        if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
+            return res.status(409).json({
+                error: 'Room is currently in use'
+            });
+        }
+
+        console.error('Failed to delete room:', error);
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    try {
+        const activities = db.prepare(`
+            SELECT id, name, teacherId, roomId
+            FROM activities
+            ORDER BY id ASC
+        `).all();
+
+        return res.status(200).json(activities);
+
+    } catch (error) {
+        console.error('Failed to fetch activities:', error);
+
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid activity ID'
+        });
+    }
+
+    try {
+        const activity = db.prepare(`
+            SELECT id, name, teacherId, roomId
+            FROM activities
+            WHERE id = ?
+        `).get(id);
+
+        if (!activity) {
+            return res.status(404).json({
+                error: 'Activity not found'
+            });
+        }
+
+        return res.status(200).json(activity);
+
+    } catch (error) {
+        console.error('Failed to fetch activity:', error);
+
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const body = req.body;
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Invalid activity data' });
+    }
+
+    const allowedFields = ['name', 'teacherId', 'roomId'];
+
+    if (Object.keys(body).some(key => !allowedFields.includes(key))) {
+        return res.status(400).json({ error: 'Invalid activity data' });
+    }
+
+    const { name, teacherId = null, roomId = null } = body;
+
+    if (
+        typeof name !== 'string' ||
+        !name.trim() ||
+        (teacherId !== null && (!Number.isSafeInteger(teacherId) || teacherId <= 0)) ||
+        (roomId !== null && (!Number.isSafeInteger(roomId) || roomId <= 0))
+    ) {
+        return res.status(400).json({ error: 'Invalid activity data' });
+    }
+
+    try {
+        if (teacherId !== null) {
+            const teacher = db.prepare(`
+                SELECT id, position
+                FROM employees
+                WHERE id = ?
+            `).get(teacherId);
+
+            if (!teacher) {
+                return res.status(404).json({
+                    error: 'Teacher not found'
+                });
+            }
+
+            if (teacher.position !== 'teacher') {
+                return res.status(409).json({
+                    error: 'Employee is not a teacher'
+                });
+            }
+        }
+
+        if (roomId !== null) {
+            const room = db.prepare(`
+                SELECT id, type
+                FROM rooms
+                WHERE id = ?
+            `).get(roomId);
+
+            if (!room) {
+                return res.status(404).json({
+                    error: 'Room not found'
+                });
+            }
+
+            if (room.type !== 'specialized') {
+                return res.status(409).json({
+                    error: 'Activity requires a specialized room'
+                });
+            }
+        }
+
+        const result = db.prepare(`
+            INSERT INTO activities (name, teacherId, roomId)
+            VALUES (?, ?, ?)
+        `).run(name.trim(), teacherId, roomId);
+
+        const activity = db.prepare(`
+            SELECT id, name, teacherId, roomId
+            FROM activities
+            WHERE id = ?
+        `).get(result.lastInsertRowid);
+
+        return res.status(201).json(activity);
+
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Activity with this name already exists'
+            });
+        }
+
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Related record is no longer available'
+            });
+        }
+
+        console.error('Failed to create activity:', error);
+
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
+    }
+});
+
+app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid activity ID' });
+    }
+
+    const body = req.body;
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Invalid activity data' });
+    }
+
+    const allowedFields = ['name', 'teacherId', 'roomId'];
+    const fields = Object.keys(body);
+
+    if (fields.length === 0 || fields.some(field => !allowedFields.includes(field))) {
+        return res.status(400).json({ error: 'Invalid activity data' });
+    }
+
+    try {
+        const existing = db.prepare(`
+            SELECT id, name, teacherId, roomId
+            FROM activities
+            WHERE id = ?
+        `).get(id);
+
+        if (!existing) {
+            return res.status(404).json({ error: 'Activity not found' });
+        }
+
+        const name = Object.hasOwn(body, 'name') ? body.name : existing.name;
+        const teacherId = Object.hasOwn(body, 'teacherId')
+            ? body.teacherId
+            : existing.teacherId;
+        const roomId = Object.hasOwn(body, 'roomId')
+            ? body.roomId
+            : existing.roomId;
+
+        if (
+            typeof name !== 'string' ||
+            !name.trim() ||
+            (teacherId !== null &&
+                (!Number.isSafeInteger(teacherId) || teacherId <= 0)) ||
+            (roomId !== null &&
+                (!Number.isSafeInteger(roomId) || roomId <= 0))
+        ) {
+            return res.status(400).json({ error: 'Invalid activity data' });
+        }
+
+        if (teacherId !== null) {
+            const teacher = db.prepare(`
+                SELECT id, position
+                FROM employees
+                WHERE id = ?
+            `).get(teacherId);
+
+            if (!teacher) {
+                return res.status(404).json({ error: 'Teacher not found' });
+            }
+
+            if (teacher.position !== 'teacher') {
+                return res.status(409).json({
+                    error: 'Employee is not a teacher'
+                });
+            }
+        }
+
+        if (roomId !== null) {
+            const room = db.prepare(`
+                SELECT id, type
+                FROM rooms
+                WHERE id = ?
+            `).get(roomId);
+
+            if (!room) {
+                return res.status(404).json({ error: 'Room not found' });
+            }
+
+            if (room.type !== 'specialized') {
+                return res.status(409).json({
+                    error: 'Activity requires a specialized room'
+                });
+            }
+        }
+
+        db.prepare(`
+            UPDATE activities
+            SET name = ?, teacherId = ?, roomId = ?
+            WHERE id = ?
+        `).run(name.trim(), teacherId, roomId, id);
+
+        const updated = db.prepare(`
+            SELECT id, name, teacherId, roomId
+            FROM activities
+            WHERE id = ?
+        `).get(id);
+
+        return res.status(200).json(updated);
+
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Activity with this name already exists'
+            });
+        }
+
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Related record is no longer available'
+            });
+        }
+
+        console.error('Failed to update activity:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid activity ID' });
+    }
+
+    try {
+        const activity = db.prepare(`
+            SELECT id FROM activities WHERE id = ?
+        `).get(id);
+
+        if (!activity) {
+            return res.status(404).json({ error: 'Activity not found' });
+        }
+
+        const usedBySchedule = db.prepare(`
+            SELECT id
+            FROM schedule_slots
+            WHERE activityId = ?
+        `).get(id);
+
+        if (usedBySchedule) {
+            return res.status(409).json({
+                error: 'Activity is currently used in schedule'
+            });
+        }
+
+        db.prepare(`
+            DELETE FROM activities WHERE id = ?
+        `).run(id);
+
+        return res.status(204).send();
+
+    } catch (error) {
+        if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
+            return res.status(409).json({
+                error: 'Activity is currently in use'
+            });
+        }
+
+        console.error('Failed to delete activity:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+function findScheduleConflict(slot, ignoreId = null) {
+    const { groupId, teacherId, roomId, dayOfWeek, startTime } = slot;
+
+    const conflicts = [
+        { column: 'groupId', value: groupId, type: 'group_busy' },
+        { column: 'teacherId', value: teacherId, type: 'teacher_busy' },
+        { column: 'roomId', value: roomId, type: 'room_busy' }
+    ];
+
+    for (const conflict of conflicts) {
+        const existing = db.prepare(`
+            SELECT id
+            FROM schedule_slots
+            WHERE dayOfWeek = ?
+              AND startTime = ?
+              AND ${conflict.column} = ?
+              AND id IS NOT ?
+            ORDER BY id ASC
+            LIMIT 1
+        `).get(
+            dayOfWeek,
+            startTime,
+            conflict.value,
+            ignoreId
+        );
+
+        if (existing) {
+            return {
+                type: conflict.type,
+                slotId: existing.id
+            };
+        }
+    }
+
+    return null;
+}
+
+
 
 // ==========================================
 // 6. РАХУНКИ ТА ПЛАТЕЖІ
