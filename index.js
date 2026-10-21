@@ -3094,6 +3094,284 @@ app.get(
 
 
 // ==========================================
+// РОЗКЛАД
+// ==========================================
+
+function generateScheduleLogic() {
+    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
+    const activities = db.prepare('SELECT * FROM activities LIMIT 5').all();
+
+    if (activities.length < 5) {
+        throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
+    }
+
+    for (const act of activities) {
+        if (!act.teacherId || !act.roomId) {
+            throw new Error(`Дисципліна "${act.name}" не має призначеного викладача або кімнати.`);
+        }
+    }
+
+    const insertSlot = db.prepare(`
+        INSERT INTO schedule_slots (groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const generate = db.transaction(() => {
+        db.prepare('DELETE FROM schedule_slots').run();
+        const numActivities = 5;
+        
+        for (let d = 0; d < 5; d++) {
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i];
+                const activityIndex = (i + d) % numActivities;
+                const activity = activities[activityIndex];
+
+                const slotIndex = Math.floor(i / numActivities);
+                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30); 
+                
+                const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+                const mm = (totalMinutes % 60).toString().padStart(2, '0');
+                const startTime = `${hh}:${mm}`;
+
+                insertSlot.run(
+                    group.id, activity.id, activity.teacherId, 
+                    activity.roomId, d, startTime, 30
+                );
+            }
+        }
+    });
+
+    generate();
+}
+
+// --- ЕНДПОІНТИ РОЗКЛАДУ ---
+
+// 1. Згенерувати розклад
+app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    try {
+        generateScheduleLogic();
+        res.status(201).json({ message: 'Розклад на тиждень успішно згенеровано.' });
+    } catch (error) {
+        res.status(409).json({ error: error.message });
+    }
+});
+
+// 2. Отримати розклад для групи (ТЗ: батьки - своя дитина (і за children.parentId, і за child_parents), вчителі - свої групи, admin/manager - всі)
+app.get('/groups/:id/schedule', authenticate, (req, res) => {
+    const groupId = Number(req.params.id);
+
+    // Перевірка прав доступу за ТЗ
+    if (req.user.role === 'parent') {
+        // Батько бачить тільки групу своєї дитини (перевірка і за прямою колонкою, і за таблицею опікунів)
+        const childInGroup = db.prepare(`
+            SELECT 1 
+            FROM children c
+            LEFT JOIN child_parents cp ON c.id = cp.childId
+            WHERE (c.parentId = ? OR cp.parentId = ?) AND c.groupId = ? 
+            LIMIT 1
+        `).get(req.user.parentId, req.user.parentId, groupId);
+        
+        if (!childInGroup) {
+            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
+        }
+    } else if (req.user.role === 'teacher') {
+        // Викладач бачить розклад лише тих груп, де він веде заняття
+        const teachesInGroup = db.prepare('SELECT 1 FROM schedule_slots WHERE teacherId = ? AND groupId = ? LIMIT 1').get(req.user.employeeId, groupId);
+        if (!teachesInGroup) {
+            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише своїх груп.' });
+        }
+    }
+    // Якщо роль admin або manager — код просто йде далі без блокування
+
+    const schedule = db.prepare(`
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+               a.name as activityName, e.fullName as teacherName, r.name as roomName
+        FROM schedule_slots s
+        JOIN activities a ON s.activityId = a.id
+        JOIN employees e ON s.teacherId = e.id
+        JOIN rooms r ON s.roomId = r.id
+        WHERE s.groupId = ?
+        ORDER BY s.dayOfWeek, s.startTime
+    `).all(groupId);
+
+    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
+    res.status(200).json(schedule);
+});
+
+// 3. Отримати розклад для викладача (ТЗ: тільки свій розклад, admin/manager - всі)
+app.get('/teachers/:id/schedule', authenticate, (req, res) => {
+    const requestedTeacherId = Number(req.params.id);
+
+    // Перевірка прав доступу за ТЗ
+    if (req.user.role === 'parent') {
+        return res.status(403).json({ error: 'Доступ заборонено. Батьки не мають доступу до персональних розкладів викладачів.' });
+    } else if (req.user.role === 'teacher' && req.user.employeeId !== requestedTeacherId) {
+        // Викладач бачить тільки свій розклад
+        return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати лише власний розклад.' });
+    }
+    // admin та manager проходять без додаткових перевірок
+
+    const schedule = db.prepare(`
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+               g.name as groupName, a.name as activityName, r.name as roomName
+        FROM schedule_slots s
+        JOIN groups g ON s.groupId = g.id
+        JOIN activities a ON s.activityId = a.id
+        JOIN rooms r ON s.roomId = r.id
+        WHERE s.teacherId = ?
+        ORDER BY s.dayOfWeek, s.startTime
+    `).all(requestedTeacherId);
+
+    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
+    res.status(200).json(schedule);
+});
+
+// 4. Оновити слот розкладу (перенести урок)
+app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), (req, res) => {
+    try {
+        const slotId = Number(req.params.id);
+        
+        // Валідація на порожнє тіло та наявність полів
+        if (!req.body || req.body.startTime === undefined || req.body.dayOfWeek === undefined) {
+            return res.status(400).json({ error: 'Відсутні обов\'язкові поля: startTime, dayOfWeek' });
+        }
+
+        const { startTime, dayOfWeek } = req.body;
+        
+        // Сувора валідація типу і значень (isInteger і т.д.)
+        const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
+        if (!validTimes.includes(startTime) || !Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 4) {
+            return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).' });
+        }
+
+        const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
+        if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
+
+        // Перевірка: вчитель може міняти тільки свої заняття
+        if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
+            return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
+        }
+
+        // Перевірка колізій через функцію Громова
+        const conflict = findScheduleConflict({
+            groupId: currentSlot.groupId,
+            teacherId: currentSlot.teacherId,
+            roomId: currentSlot.roomId,
+            dayOfWeek: dayOfWeek,
+            startTime: startTime,
+            durationMin: 30
+        }, slotId);
+
+        if (conflict) {
+            return res.status(409).json({ 
+                error: 'Колізія розкладу: час вже зайнятий', 
+                type: conflict.type, 
+                slotId: conflict.slotId 
+            });
+        }
+
+        db.prepare(`
+            UPDATE schedule_slots 
+            SET startTime = ?, dayOfWeek = ? 
+            WHERE id = ?
+        `).run(startTime, dayOfWeek, slotId);
+        
+        res.status(200).json({ message: 'Слот успішно оновлено' });
+
+    } catch (error) {
+        // Перехоплення унікальності на рівні БД
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ==========================================
+// ПРИБУТОК
+// ==========================================
+
+// --- ЧИСТІ ФУНКЦІЇ ДЛЯ РОЗРАХУНКУ ПРИБУТКУ ---
+function calcGroupProfit(groupId) {
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
+    if (!group) throw new Error('Групу не знайдено');
+
+    const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(groupId);
+    const kidsCount = children.length;
+
+    let totalIncome = 0;
+    for (const child of children) {
+        totalIncome += calcTuition(child).perMonth;
+    }
+
+    const educatorSalary = calcEducatorSalary(kidsCount);
+    const assistantSalary = calcAssistantSalary(kidsCount);
+    const totalExpenses = 50000 + educatorSalary + assistantSalary;
+
+    return {
+        groupName: group.name,
+        childrenCount: kidsCount,
+        income: totalIncome,
+        expenses: totalExpenses,
+        netProfit: totalIncome - totalExpenses
+    };
+}
+
+function calcKindergartenProfit() {
+    const allActiveChildren = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE isActive = 1').all();
+    
+    let totalKindergartenIncome = 0;
+    for (const child of allActiveChildren) {
+        totalKindergartenIncome += calcTuition(child).perMonth;
+    }
+
+    const groups = db.prepare('SELECT id FROM groups').all();
+    let totalGroupExpenses = 0;
+
+    for (const g of groups) {
+        const kidsInGroup = db.prepare('SELECT count(*) as count FROM children WHERE groupId = ? AND isActive = 1').get(g.id).count;
+        totalGroupExpenses += calcEducatorSalary(kidsInGroup) + calcAssistantSalary(kidsInGroup);
+    }
+
+    const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
+    const totalRent = room && room.totalRent ? room.totalRent : 0;
+    
+    const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
+    const totalKindergartenExpenses = totalRent + 80000 + (40000 * teachersCount) + totalGroupExpenses;
+
+    return {
+        totalIncome: totalKindergartenIncome,
+        totalExpenses: totalKindergartenExpenses,
+        totalNetProfit: totalKindergartenIncome - totalKindergartenExpenses
+    };
+}
+
+// --- ЕНДПОІНТИ ПРИБУТКУ ---
+
+// 5. Отримати прибуток для конкретної групи
+app.get('/groups/:id/profit', authenticate, requireRole('admin'), (req, res) => {
+    try {
+        const profitData = calcGroupProfit(Number(req.params.id));
+        res.status(200).json(profitData);
+    } catch (error) {
+        if (error.message === 'Групу не знайдено') {
+            return res.status(404).json({ error: error.message });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 6. Отримати загальний фінансовий звіт по садочку
+app.get('/admin/profit', authenticate, requireRole('admin'), (req, res) => {
+    try {
+        const profitData = calcKindergartenProfit();
+        res.status(200).json(profitData);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ==========================================
 // 7. ОБРОБКА ПОМИЛОК
 // ==========================================
 // Обробники помилок розміщені після маршрутів API.
