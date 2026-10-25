@@ -156,6 +156,17 @@ function initializeDatabase() {
             CHECK (isActive = 1 OR groupId IS NULL)
         );
 
+        CREATE TABLE IF NOT EXISTS child_parents (
+            childId INTEGER NOT NULL,
+            parentId INTEGER NOT NULL,
+            PRIMARY KEY (childId, parentId),
+            FOREIGN KEY (childId) REFERENCES children(id) ON DELETE CASCADE,
+            FOREIGN KEY (parentId) REFERENCES parents(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_child_parents_parent
+            ON child_parents(parentId);
+
         CREATE TABLE IF NOT EXISTS activities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -187,6 +198,13 @@ function initializeDatabase() {
     `);
 
     migrateDatabase();
+
+    // Основний батько кожної дитини завжди має запис у child_parents
+    // (для баз, створених до появи опікунів); повторний запуск безпечний.
+    db.exec(`
+        INSERT OR IGNORE INTO child_parents (childId, parentId)
+            SELECT id, parentId FROM children;
+    `);
 
     db.exec(`
         CREATE TRIGGER IF NOT EXISTS check_group_capacity_insert
@@ -583,6 +601,49 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => 
         });
     }
 });
+
+// GET /users - список акаунтів (лише admin); passwordHash ніколи не повертається
+app.get('/users', authenticate, requireRole('admin'), (req, res) => {
+    const users = db.prepare(`
+        SELECT id, login, role, parentId, employeeId
+        FROM users
+        ORDER BY id
+    `).all();
+
+    return res.status(200).json(users);
+});
+
+// DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
+// адміністратор не може видалити сам себе
+app.delete('/users/:id', authenticate, requireRole('admin'), (req, res) => {
+    const rawId = req.params.id;
+    const id = Number(rawId);
+
+    if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id)) {
+        return res.status(400).json({
+            error: 'Некоректний ID користувача'
+        });
+    }
+
+    if (id === req.user.id) {
+        return res.status(409).json({
+            error: 'Не можна видалити власний акаунт'
+        });
+    }
+
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+
+    if (!user) {
+        return res.status(404).json({
+            error: 'Користувача не знайдено'
+        });
+    }
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+    return res.status(204).send();
+});
+
 // ==========================================
 // 3. БАТЬКИ ТА ПРАЦІВНИКИ
 // ==========================================
@@ -1105,21 +1166,7 @@ const MIN_CHILD_AGE = 2; // допустимий вік дитини (повни
 const MAX_CHILD_AGE = 5;
 const MAX_GUARDIANS = 9; // максимум додаткових опікунів
 
-db.exec(`
-    CREATE TABLE IF NOT EXISTS child_parents (
-        childId INTEGER NOT NULL,
-        parentId INTEGER NOT NULL,
-        PRIMARY KEY (childId, parentId),
-        FOREIGN KEY (childId) REFERENCES children(id) ON DELETE CASCADE,
-        FOREIGN KEY (parentId) REFERENCES parents(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_child_parents_parent
-        ON child_parents(parentId);
-
-    INSERT OR IGNORE INTO child_parents (childId, parentId)
-        SELECT id, parentId FROM children;
-`);
+// Таблиця child_parents (опікуни) створюється в блоці 1, у initializeDatabase().
 
 // ---------- Допоміжні функції ----------
 

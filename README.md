@@ -239,6 +239,8 @@
 | --- | --- | --- | --- |
 | `POST /auth/login` | Вхід, повертає JWT | усі | 200, 400, 401 |
 | `POST /users` | Створити акаунт (admin: будь-яка роль; manager: лише `parent`) | A, M | 201, 400, 403, 409 |
+| `GET /users` | Список акаунтів (`id`, `login`, `role`, `parentId`, `employeeId`; `passwordHash` не повертається) | A | 200, 401, 403 |
+| `DELETE /users/:id` | Видалити акаунт; адміністратор не може видалити сам себе (`409`) | A | 204, 400, 401, 403, 404, 409 |
 | `GET /children`, `GET /children/:id` | Список і картка дитини | A, M; P лише своя | 200, 401, 403, 404 |
 | `POST /children` | Створити дитину (`parentId` обов'язковий; `guardianIds` необов'язковий масив) | A, M | 201, 400, 403 |
 | `PUT /children/:id/parents` | Змінити основного батька й опікунів (`{ "parentId", "guardianIds" }`) | A, M | 200, 400, 403, 404 |
