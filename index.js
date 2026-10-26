@@ -3205,9 +3205,17 @@ app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (
 
 // 2. Отримати розклад для групи (ТЗ: батьки - своя дитина (і за children.parentId, і за child_parents), вчителі - свої групи, admin/manager - всі)
 app.get('/groups/:id/schedule', authenticate, (req, res) => {
-    const groupId = Number(req.params.id);
+    const groupId = parseId(req.params.id);
 
-    // Перевірка прав доступу за ТЗ
+    if (groupId === null) {
+        return res.status(400).json({ error: 'Некоректний ID групи' });
+    }
+
+    const groupExists = db.prepare('SELECT 1 FROM groups WHERE id = ?').get(groupId);
+    if (!groupExists) {
+        return res.status(404).json({ error: 'Групу не знайдено' });
+    }
+
     if (req.user.role === 'parent') {
         // Батько бачить тільки групу своєї дитини (перевірка і за прямою колонкою, і за таблицею опікунів)
         const childInGroup = db.prepare(`
@@ -3247,12 +3255,21 @@ app.get('/groups/:id/schedule', authenticate, (req, res) => {
 
 // 3. Отримати розклад для викладача (ТЗ: тільки свій розклад, admin/manager - всі)
 app.get('/teachers/:id/schedule', authenticate, (req, res) => {
-    const requestedTeacherId = Number(req.params.id);
+    const teacherId = parseId(req.params.id);
+
+    if (teacherId === null) {
+        return res.status(400).json({ error: 'Некоректний ID викладача' });
+    }
+
+    const teacherExists = db.prepare('SELECT 1 FROM employees WHERE id = ?').get(teacherId);
+    if (!teacherExists) {
+        return res.status(404).json({ error: 'Викладача не знайдено' });
+    }
 
     // Перевірка прав доступу за ТЗ
     if (req.user.role === 'parent') {
         return res.status(403).json({ error: 'Доступ заборонено. Батьки не мають доступу до персональних розкладів викладачів.' });
-    } else if (req.user.role === 'teacher' && req.user.employeeId !== requestedTeacherId) {
+    } else if (req.user.role === 'teacher' && req.user.employeeId !== teacherId) {
         // Викладач бачить тільки свій розклад
         return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати лише власний розклад.' });
     }
@@ -3267,7 +3284,7 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
         JOIN rooms r ON s.roomId = r.id
         WHERE s.teacherId = ?
         ORDER BY s.dayOfWeek, s.startTime
-    `).all(requestedTeacherId);
+    `).all(teacherId);
 
     if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
     res.status(200).json(schedule);
@@ -3276,8 +3293,16 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
 // 4. Оновити слот розкладу (перенести урок)
 app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), (req, res) => {
     try {
-        const slotId = Number(req.params.id);
+        const slotId = parseId(req.params.id);
         
+        if (slotId === null) {
+            return res.status(400).json({ error: 'Некоректний ID розкладу' });
+        }
+
+        // За ТЗ: спочатку перевіряємо існування (404)
+        const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
+        if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
+
         // Валідація на порожнє тіло та наявність полів
         if (!req.body || req.body.startTime === undefined || req.body.dayOfWeek === undefined) {
             return res.status(400).json({ error: 'Відсутні обов\'язкові поля: startTime, dayOfWeek' });
@@ -3285,16 +3310,13 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
 
         const { startTime, dayOfWeek } = req.body;
         
-        // Сувора валідація типу і значень (isInteger і т.д.)
+        // Сувора валідація типу і значень
         const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
         if (!validTimes.includes(startTime) || !Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 4) {
             return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).' });
         }
 
-        const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
-        if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
-
-        // Перевірка: вчитель може міняти тільки свої заняття
+        // Перевірка: вчитель може міняти тільки свої заняття (403)
         if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
             return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
         }
