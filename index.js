@@ -3375,7 +3375,7 @@ function calcGroupProfit(groupId) {
 
     const educatorSalary = calcEducatorSalary(kidsCount);
     const assistantSalary = calcAssistantSalary(kidsCount);
-    const totalExpenses = 50000 + educatorSalary + assistantSalary;
+    const totalExpenses = CONFIG.ROOM_RENT + educatorSalary + assistantSalary;
 
     return {
         groupName: group.name,
@@ -3406,7 +3406,7 @@ function calcKindergartenProfit() {
     const totalRent = room && room.totalRent ? room.totalRent : 0;
     
     const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
-    const totalKindergartenExpenses = totalRent + 80000 + (40000 * teachersCount) + totalGroupExpenses;
+    const totalKindergartenExpenses = totalRent + CONFIG.MANAGER_SALARY + (CONFIG.TEACHER_SALARY * teachersCount) + totalGroupExpenses;
 
     return {
         totalIncome: totalKindergartenIncome,
@@ -3419,8 +3419,14 @@ function calcKindergartenProfit() {
 
 // 5. Отримати прибуток для конкретної групи
 app.get('/groups/:id/profit', authenticate, requireRole('admin'), (req, res) => {
+    const id = parseId(req.params.id);
+
+    if (id === null) {
+        return res.status(400).json({ error: 'Некоректний ID групи' });
+    }
+
     try {
-        const profitData = calcGroupProfit(Number(req.params.id));
+        const profitData = calcGroupProfit(id);
         res.status(200).json(profitData);
     } catch (error) {
         if (error.message === 'Групу не знайдено') {
