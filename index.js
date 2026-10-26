@@ -2361,9 +2361,9 @@ app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
 
         return res.status(200).json(rooms);
     } catch (error) {
-        console.error('Failed to fetch rooms:', error);
+        console.error('Не вдалося отримати список кімнат:', error);
         return res.status(500).json({
-            error: 'Failed to fetch rooms'
+            error: 'Не вдалося отримати список кімнат'
         });
     }
 });
@@ -2373,7 +2373,7 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) 
 
     if (!Number.isSafeInteger(id) || id <= 0) {
         return res.status(400).json({
-            error: 'Invalid room ID'
+            error: 'Некоректний ID кімнати'
         });
     }
 
@@ -2386,7 +2386,7 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) 
 
         if (!room) {
             return res.status(404).json({
-                error: 'Room not found'
+                error: 'Кімнату не знайдено'
             });
         }
 
@@ -2394,7 +2394,7 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) 
     } catch (error) {
         console.error('Failed to fetch room:', error);
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2412,7 +2412,7 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => 
         rent < 0
     ) {
         return res.status(400).json({
-            error: 'Invalid room data'
+            error: 'Некоректні дані кімнати'
         });
     }
 
@@ -2434,14 +2434,14 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => 
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(409).json({
-                error: 'Room with this name already exists'
+                error: 'Кімната з такою назвою вже існує'
             });
         }
 
         console.error('Failed to create room:', error);
 
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2451,13 +2451,13 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
     const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'Invalid room ID' });
+        return res.status(400).json({ error: 'Некоректний ID кімнати' });
     }
 
     const body = req.body;
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        return res.status(400).json({ error: 'Invalid room data' });
+        return res.status(400).json({ error: 'Некоректні дані кімнати' });
     }
 
     const allowedFields = ['name', 'type', 'rent'];
@@ -2467,7 +2467,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
         fields.length === 0 ||
         fields.some(field => !allowedFields.includes(field))
     ) {
-        return res.status(400).json({ error: 'Invalid room data' });
+        return res.status(400).json({ error: 'Некоректні дані кімнати' });
     }
 
     try {
@@ -2478,7 +2478,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
         `).get(id);
 
         if (!existing) {
-            return res.status(404).json({ error: 'Room not found' });
+            return res.status(404).json({ error: 'Кімнату не знайдено' });
         }
 
         const name = Object.hasOwn(body, 'name')
@@ -2501,7 +2501,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
             !Number.isSafeInteger(rent) ||
             rent < 0
         ) {
-            return res.status(400).json({ error: 'Invalid room data' });
+            return res.status(400).json({ error: 'Некоректні дані кімнати' });
         }
 
         // Не дозволяємо змінювати базову кімнату групи
@@ -2513,7 +2513,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
 
             if (group) {
                 return res.status(409).json({
-                    error: 'Room is assigned to a group'
+                    error: 'Кімната закріплена за групою'
                 });
             }
         }
@@ -2527,7 +2527,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
 
             if (activity) {
                 return res.status(409).json({
-                    error: 'Room is assigned to an activity'
+                    error: 'Кімната закріплена за дисципліною'
                 });
             }
         }
@@ -2549,13 +2549,13 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(409).json({
-                error: 'Room with this name already exists'
+                error: 'Кімната з такою назвою вже існує'
             });
         }
 
         console.error('Failed to update room:', error);
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2565,7 +2565,7 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
     const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'Invalid room ID' });
+        return res.status(400).json({ error: 'Некоректний ID кімнати' });
     }
 
     try {
@@ -2575,7 +2575,7 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
 
         if (!room) {
             return res.status(404).json({
-                error: 'Room not found'
+                error: 'Кімнату не знайдено'
             });
         }
 
@@ -2593,7 +2593,7 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
 
         if (usedByGroup || usedByActivity || usedBySchedule) {
             return res.status(409).json({
-                error: 'Room is currently in use'
+                error: 'Кімната використовується'
             });
         }
 
@@ -2606,13 +2606,13 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
     } catch (error) {
         if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
             return res.status(409).json({
-                error: 'Room is currently in use'
+                error: 'Кімната використовується'
             });
         }
 
         console.error('Failed to delete room:', error);
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2631,7 +2631,7 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
         console.error('Failed to fetch activities:', error);
 
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2641,7 +2641,7 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, 
 
     if (!Number.isSafeInteger(id) || id <= 0) {
         return res.status(400).json({
-            error: 'Invalid activity ID'
+            error: 'Некоректний ID дисципліни'
         });
     }
 
@@ -2654,7 +2654,7 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, 
 
         if (!activity) {
             return res.status(404).json({
-                error: 'Activity not found'
+                error: 'Дисципліну не знайдено'
             });
         }
 
@@ -2664,7 +2664,7 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, 
         console.error('Failed to fetch activity:', error);
 
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2673,13 +2673,13 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
     const body = req.body;
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        return res.status(400).json({ error: 'Invalid activity data' });
+        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
     const allowedFields = ['name', 'teacherId', 'roomId'];
 
     if (Object.keys(body).some(key => !allowedFields.includes(key))) {
-        return res.status(400).json({ error: 'Invalid activity data' });
+        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
     const { name, teacherId = null, roomId = null } = body;
@@ -2690,7 +2690,7 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
         (teacherId !== null && (!Number.isSafeInteger(teacherId) || teacherId <= 0)) ||
         (roomId !== null && (!Number.isSafeInteger(roomId) || roomId <= 0))
     ) {
-        return res.status(400).json({ error: 'Invalid activity data' });
+        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
     try {
@@ -2703,13 +2703,13 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
 
             if (!teacher) {
                 return res.status(404).json({
-                    error: 'Teacher not found'
+                    error: 'Викладача не знайдено'
                 });
             }
 
             if (teacher.position !== 'teacher') {
                 return res.status(409).json({
-                    error: 'Employee is not a teacher'
+                    error: 'Працівник не є викладачем'
                 });
             }
         }
@@ -2723,13 +2723,13 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
 
             if (!room) {
                 return res.status(404).json({
-                    error: 'Room not found'
+                    error: 'Кімнату не знайдено'
                 });
             }
 
             if (room.type !== 'specialized') {
                 return res.status(409).json({
-                    error: 'Activity requires a specialized room'
+                    error: 'Для дисципліни потрібна спеціалізована кімната'
                 });
             }
         }
@@ -2750,20 +2750,20 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(409).json({
-                error: 'Activity with this name already exists'
+                error: 'Дисципліна з такою назвою вже існує'
             });
         }
 
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
             return res.status(409).json({
-                error: 'Related record is no longer available'
+                error: 'Пов’язаний запис більше не існує'
             });
         }
 
         console.error('Failed to create activity:', error);
 
         return res.status(500).json({
-            error: 'Internal server error'
+            error: 'Внутрішня помилка сервера'
         });
     }
 });
@@ -2772,20 +2772,20 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
     const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'Invalid activity ID' });
+        return res.status(400).json({ error: 'Некоректний ID дисципліни' });
     }
 
     const body = req.body;
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        return res.status(400).json({ error: 'Invalid activity data' });
+        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
     const allowedFields = ['name', 'teacherId', 'roomId'];
     const fields = Object.keys(body);
 
     if (fields.length === 0 || fields.some(field => !allowedFields.includes(field))) {
-        return res.status(400).json({ error: 'Invalid activity data' });
+        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
     try {
@@ -2796,7 +2796,7 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
         `).get(id);
 
         if (!existing) {
-            return res.status(404).json({ error: 'Activity not found' });
+            return res.status(404).json({ error: 'Дисципліну не знайдено' });
         }
 
         const name = Object.hasOwn(body, 'name') ? body.name : existing.name;
@@ -2815,7 +2815,7 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
             (roomId !== null &&
                 (!Number.isSafeInteger(roomId) || roomId <= 0))
         ) {
-            return res.status(400).json({ error: 'Invalid activity data' });
+            return res.status(400).json({ error: 'Некоректні дані дисципліни' });
         }
 
         if (teacherId !== null) {
@@ -2826,12 +2826,12 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
             `).get(teacherId);
 
             if (!teacher) {
-                return res.status(404).json({ error: 'Teacher not found' });
+                return res.status(404).json({ error: 'Викладача не знайдено' });
             }
 
             if (teacher.position !== 'teacher') {
                 return res.status(409).json({
-                    error: 'Employee is not a teacher'
+                    error: 'Працівник не є викладачем'
                 });
             }
         }
@@ -2844,12 +2844,12 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
             `).get(roomId);
 
             if (!room) {
-                return res.status(404).json({ error: 'Room not found' });
+                return res.status(404).json({ error: 'Кімнату не знайдено' });
             }
 
             if (room.type !== 'specialized') {
                 return res.status(409).json({
-                    error: 'Activity requires a specialized room'
+                    error: 'Для дисципліни потрібна спеціалізована кімната'
                 });
             }
         }
@@ -2871,18 +2871,18 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(409).json({
-                error: 'Activity with this name already exists'
+                error: 'Дисципліна з такою назвою вже існує'
             });
         }
 
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
             return res.status(409).json({
-                error: 'Related record is no longer available'
+                error: 'Пов’язаний запис більше не існує'
             });
         }
 
         console.error('Failed to update activity:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
@@ -2890,7 +2890,7 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => 
     const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'Invalid activity ID' });
+        return res.status(400).json({ error: 'Некоректний ID дисципліни' });
     }
 
     try {
@@ -2899,7 +2899,7 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => 
         `).get(id);
 
         if (!activity) {
-            return res.status(404).json({ error: 'Activity not found' });
+            return res.status(404).json({ error: 'Дисципліну не знайдено' });
         }
 
         const usedBySchedule = db.prepare(`
@@ -2910,7 +2910,7 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => 
 
         if (usedBySchedule) {
             return res.status(409).json({
-                error: 'Activity is currently used in schedule'
+                error: 'Дисципліна використовується в розкладі'
             });
         }
 
@@ -2923,12 +2923,12 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => 
     } catch (error) {
         if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
             return res.status(409).json({
-                error: 'Activity is currently in use'
+                error: 'Дисципліна використовується'
             });
         }
 
         console.error('Failed to delete activity:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
@@ -3587,7 +3587,7 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), (req, res) => {
 // ==========================================
 // 8. ПЕРЕВІРКА РОБОТИ API
 // ==========================================
-app.get('/api/health', (req, res) => {
+app.get(['/health', '/api/health'], (req, res) => {
     try {
         db.prepare('SELECT 1').get();
 
@@ -3600,7 +3600,7 @@ app.get('/api/health', (req, res) => {
         console.error('Database health check failed:', error);
 
         res.status(503).json({
-            error: 'Database unavailable'
+            error: 'База даних недоступна'
         });
     }
 });
@@ -3611,7 +3611,7 @@ app.get('/api/health', (req, res) => {
 
 app.use((req, res) => {
     res.status(404).json({
-        error: 'Route not found'
+        error: 'Маршрут не знайдено'
     });
 });
 
@@ -3628,13 +3628,13 @@ app.use((err, req, res, next) => {
         'body' in err) {
 
         return res.status(400).json({
-            error: 'Invalid JSON body'
+            error: 'Некоректний формат JSON'
         });
     }
 
     // Інші непередбачені помилки
     return res.status(500).json({
-        error: 'Internal server error'
+        error: 'Внутрішня помилка сервера'
     });
 });
 
