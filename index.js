@@ -3146,7 +3146,7 @@ app.get(
 
 function generateScheduleLogic() {
     const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
-    const activities = db.prepare('SELECT * FROM activities LIMIT 5').all();
+    const activities = db.prepare('SELECT * FROM activities ORDER BY id ASC LIMIT 5').all();
 
     if (activities.length < 5) {
         throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
