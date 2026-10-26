@@ -1437,11 +1437,18 @@ function validateGroupFields(data, isUpdate) {
 function checkGroupRelations(group, groupId) {
     if (group.roomId !== null) {
         const room = db
-            .prepare('SELECT id FROM rooms WHERE id = ?')
+            .prepare('SELECT id, type FROM rooms WHERE id = ?')
             .get(group.roomId);
 
         if (!room) {
             return { status: 400, error: 'Кімнату не знайдено' };
+        }
+
+        if (room.type !== 'base') {
+            return {
+                status: 409,
+                error: 'Групі можна призначити лише базову кімнату',
+            };
         }
 
         const taken = db
@@ -1467,6 +1474,17 @@ function checkGroupRelations(group, groupId) {
                 error: 'Вихователь не знайдений або має іншу посаду',
             };
         }
+
+        const educatorTaken = db
+            .prepare('SELECT id FROM groups WHERE educatorId = ? AND id <> ?')
+            .get(group.educatorId, groupId ?? 0);
+
+        if (educatorTaken) {
+            return {
+                status: 409,
+                error: 'Вихователь вже закріплений за іншою групою',
+            };
+        }
     }
 
     if (group.assistantId !== null) {
@@ -1478,6 +1496,17 @@ function checkGroupRelations(group, groupId) {
             return {
                 status: 400,
                 error: 'Помічник не знайдений або має іншу посаду',
+            };
+        }
+
+        const assistantTaken = db
+            .prepare('SELECT id FROM groups WHERE assistantId = ? AND id <> ?')
+            .get(group.assistantId, groupId ?? 0);
+
+        if (assistantTaken) {
+            return {
+                status: 409,
+                error: 'Помічник вже закріплений за іншою групою',
             };
         }
     }
@@ -3166,7 +3195,7 @@ function generateScheduleLogic() {
     const generate = db.transaction(() => {
         db.prepare('DELETE FROM schedule_slots').run();
         const numActivities = 5;
-        
+
         for (let d = 0; d < 5; d++) {
             for (let i = 0; i < groups.length; i++) {
                 const group = groups[i];
@@ -3174,14 +3203,14 @@ function generateScheduleLogic() {
                 const activity = activities[activityIndex];
 
                 const slotIndex = Math.floor(i / numActivities);
-                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30); 
-                
+                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30);
+
                 const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
                 const mm = (totalMinutes % 60).toString().padStart(2, '0');
                 const startTime = `${hh}:${mm}`;
 
                 insertSlot.run(
-                    group.id, activity.id, activity.teacherId, 
+                    group.id, activity.id, activity.teacherId,
                     activity.roomId, d, startTime, 30
                 );
             }
@@ -3219,13 +3248,13 @@ app.get('/groups/:id/schedule', authenticate, (req, res) => {
     if (req.user.role === 'parent') {
         // Батько бачить тільки групу своєї дитини (перевірка і за прямою колонкою, і за таблицею опікунів)
         const childInGroup = db.prepare(`
-            SELECT 1 
+            SELECT 1
             FROM children c
             LEFT JOIN child_parents cp ON c.id = cp.childId
-            WHERE (c.parentId = ? OR cp.parentId = ?) AND c.groupId = ? 
+            WHERE (c.parentId = ? OR cp.parentId = ?) AND c.groupId = ?
             LIMIT 1
         `).get(req.user.parentId, req.user.parentId, groupId);
-        
+
         if (!childInGroup) {
             return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
         }
@@ -3239,7 +3268,7 @@ app.get('/groups/:id/schedule', authenticate, (req, res) => {
     // Якщо роль admin або manager — код просто йде далі без блокування
 
     const schedule = db.prepare(`
-        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin,
                a.name as activityName, e.fullName as teacherName, r.name as roomName
         FROM schedule_slots s
         JOIN activities a ON s.activityId = a.id
@@ -3276,7 +3305,7 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
     // admin та manager проходять без додаткових перевірок
 
     const schedule = db.prepare(`
-        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin, 
+        SELECT s.id, s.dayOfWeek, s.startTime, s.durationMin,
                g.name as groupName, a.name as activityName, r.name as roomName
         FROM schedule_slots s
         JOIN groups g ON s.groupId = g.id
@@ -3294,7 +3323,7 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
 app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), (req, res) => {
     try {
         const slotId = parseId(req.params.id);
-        
+
         if (slotId === null) {
             return res.status(400).json({ error: 'Некоректний ID розкладу' });
         }
@@ -3309,7 +3338,7 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         }
 
         const { startTime, dayOfWeek } = req.body;
-        
+
         // Сувора валідація типу і значень
         const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
         if (!validTimes.includes(startTime) || !Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 4) {
@@ -3332,19 +3361,19 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         }, slotId);
 
         if (conflict) {
-            return res.status(409).json({ 
-                error: 'Колізія розкладу: час вже зайнятий', 
-                type: conflict.type, 
-                slotId: conflict.slotId 
+            return res.status(409).json({
+                error: 'Колізія розкладу: час вже зайнятий',
+                type: conflict.type,
+                slotId: conflict.slotId
             });
         }
 
         db.prepare(`
-            UPDATE schedule_slots 
-            SET startTime = ?, dayOfWeek = ? 
+            UPDATE schedule_slots
+            SET startTime = ?, dayOfWeek = ?
             WHERE id = ?
         `).run(startTime, dayOfWeek, slotId);
-        
+
         res.status(200).json({ message: 'Слот успішно оновлено' });
 
     } catch (error) {
@@ -3388,7 +3417,7 @@ function calcGroupProfit(groupId) {
 
 function calcKindergartenProfit() {
     const allActiveChildren = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE isActive = 1').all();
-    
+
     let totalKindergartenIncome = 0;
     for (const child of allActiveChildren) {
         totalKindergartenIncome += calcTuition(child).perMonth;
@@ -3404,7 +3433,7 @@ function calcKindergartenProfit() {
 
     const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
     const totalRent = room && room.totalRent ? room.totalRent : 0;
-    
+
     const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
     const totalKindergartenExpenses = totalRent + CONFIG.MANAGER_SALARY + (CONFIG.TEACHER_SALARY * teachersCount) + totalGroupExpenses;
 
