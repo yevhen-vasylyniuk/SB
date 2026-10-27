@@ -34,6 +34,9 @@
 - `bcryptjs` для хешування паролів
 - `jsonwebtoken` для JWT
 - `dotenv` для конфігурації
+- `zod` для валідації запитів
+
+Усі вхідні дані (`req.params`, `req.query`, `req.body`) перевіряються схемами Zod, а не ручними `if`. Спільні елементи (`idParams`, `idField`, `requiredText`, `strictBody`, `patchBody` і middleware `validate`) лежать наприкінці блоку 1 у `index.js`, а схеми сутностей у своїх блоках перед маршрутами. Новий маршрут підключає схему так: `app.patch('/x/:id', authenticate, requireRole('admin'), validate({ params: idParams('x'), body: updateXBody }), handler)`, а розібрані значення (з обрізаними пробілами й числами замість рядків) беруться в handler із `req.valid.params`, `req.valid.query` і `req.valid.body`. Відповідь на помилку незмінна: `400 { "error": "повідомлення українською" }`. Перевірки, яким потрібна база даних (існування запису, конфлікти 409), лишаються в handler.
 
 ## 4. Склад команди та розподіл завдань
 
