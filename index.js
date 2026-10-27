@@ -9,6 +9,20 @@ const { z } = require('zod');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Глобальні константи HTTP-статусів
+const HTTP_STATUS = {
+    OK: 200,
+    CREATED: 201,
+    NO_CONTENT: 204,
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
+    NOT_FOUND: 404,
+    CONFLICT: 409,
+    INTERNAL_SERVER_ERROR: 500,
+    SERVICE_UNAVAILABLE: 503
+};
+
 // Тарифи й ставки з ТЗ (суми в цілих гривнях). Редагування через API це бонус.
 const CONFIG = {
     BASE_TUITION_MONTH: 15000,
@@ -385,7 +399,7 @@ function validate(schemas) {
             const result = schemas[part].safeParse(req[part]);
 
             if (!result.success) {
-                return res.status(400).json({ error: firstIssueMessage(result.error) });
+                return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: firstIssueMessage(result.error) });
             }
 
             req.valid[part] = result.data;
@@ -418,7 +432,7 @@ function authenticate(req, res, next) {
     const authHeader = req.headers.authorization;
 
     if (typeof authHeader !== 'string') {
-        return res.status(401).json({
+        return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Потрібна авторизація'
         });
     }
@@ -426,7 +440,7 @@ function authenticate(req, res, next) {
     const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
 
     if (!match) {
-        return res.status(401).json({
+        return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Невірний формат токена'
         });
     }
@@ -441,7 +455,7 @@ function authenticate(req, res, next) {
             !Number.isInteger(decoded.userId) ||
             !['admin', 'manager', 'parent', 'teacher'].includes(decoded.role)
         ) {
-            return res.status(401).json({
+            return res.status(HTTP_STATUS.UNAUTHORIZED).json({
                 error: 'Недійсний токен'
             });
         }
@@ -453,7 +467,7 @@ function authenticate(req, res, next) {
         `).get(decoded.userId);
 
         if (!user || user.role !== decoded.role) {
-            return res.status(401).json({
+            return res.status(HTTP_STATUS.UNAUTHORIZED).json({
                 error: 'Користувача не знайдено або роль змінена'
             });
         }
@@ -461,7 +475,7 @@ function authenticate(req, res, next) {
         req.user = user;
         next();
     } catch (error) {
-        return res.status(401).json({
+        return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Недійсний або прострочений токен'
         });
     }
@@ -470,13 +484,13 @@ function authenticate(req, res, next) {
 function requireRole(...allowedRoles) {
     return (req, res, next) => {
         if (!req.user) {
-            return res.status(401).json({
+            return res.status(HTTP_STATUS.UNAUTHORIZED).json({
                 error: 'Потрібна авторизація'
             });
         }
 
         if (!allowedRoles.includes(req.user.role)) {
-            return res.status(403).json({
+            return res.status(HTTP_STATUS.FORBIDDEN).json({
                 error: 'Недостатньо прав доступу'
             });
         }
@@ -655,23 +669,23 @@ function handleDbError(res, error) {
     const message = String(error.message || '');
 
     if (message.includes('Group capacity exceeded')) {
-        return res.status(409).json({ error: 'Група заповнена' });
+        return res.status(HTTP_STATUS.CONFLICT).json({ error: 'Група заповнена' });
     }
 
     if (message.includes('Group capacity below current enrollment')) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Місткість не може бути меншою за кількість дітей у групі',
         });
     }
 
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Запис з такими унікальними даними вже існує',
         });
     }
 
     if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-        return res.status(409).json({ error: 'Порушено зв’язок між записами' });
+        return res.status(HTTP_STATUS.CONFLICT).json({ error: 'Порушено зв’язок між записами' });
     }
 
     throw error;
@@ -836,12 +850,12 @@ function checkGroupRelations(group, groupId) {
             .get(group.roomId);
 
         if (!room) {
-            return { status: 400, error: 'Кімнату не знайдено' };
+            return { status: HTTP_STATUS.BAD_REQUEST, error: 'Кімнату не знайдено' };
         }
 
         if (room.type !== 'base') {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Групі можна призначити лише базову кімнату',
             };
         }
@@ -852,7 +866,7 @@ function checkGroupRelations(group, groupId) {
 
         if (taken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Кімната вже закріплена за іншою групою',
             };
         }
@@ -865,7 +879,7 @@ function checkGroupRelations(group, groupId) {
 
         if (!educator || educator.position !== 'educator') {
             return {
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 error: 'Вихователь не знайдений або має іншу посаду',
             };
         }
@@ -876,7 +890,7 @@ function checkGroupRelations(group, groupId) {
 
         if (educatorTaken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Вихователь вже закріплений за іншою групою',
             };
         }
@@ -889,7 +903,7 @@ function checkGroupRelations(group, groupId) {
 
         if (!assistant || assistant.position !== 'assistant') {
             return {
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 error: 'Помічник не знайдений або має іншу посаду',
             };
         }
@@ -900,7 +914,7 @@ function checkGroupRelations(group, groupId) {
 
         if (assistantTaken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Помічник вже закріплений за іншою групою',
             };
         }
@@ -998,7 +1012,7 @@ function checkParentsExist(parentId, guardianIds) {
 
     if (cnt !== all.length) {
         return {
-            status: 400,
+            status: HTTP_STATUS.BAD_REQUEST,
             error: 'Одного або кількох представників не знайдено',
         };
     }
@@ -1018,7 +1032,7 @@ function checkGroupAssignment(
         .get(groupId);
 
     if (!group) {
-        return { status: 400, error: 'Групу не знайдено' };
+        return { status: HTTP_STATUS.BAD_REQUEST, error: 'Групу не знайдено' };
     }
 
     if (checkAge && ENFORCE_AGE_MATCH) {
@@ -1026,7 +1040,7 @@ function checkGroupAssignment(
 
         if (age !== group.ageCategory) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: `Вік дитини (${age}) не відповідає віковій категорії групи (${group.ageCategory})`,
             };
         }
@@ -1041,7 +1055,7 @@ function checkGroupAssignment(
             .get(groupId, childId ?? 0);
 
         if (cnt >= group.capacity) {
-            return { status: 409, error: 'Група заповнена' };
+            return { status: HTTP_STATUS.CONFLICT, error: 'Група заповнена' };
         }
     }
 
@@ -1448,7 +1462,7 @@ app.post('/auth/login', validate({ body: loginBody }), (req, res) => {
     `).get(login.trim());
 
     if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
-        return res.status(401).json({
+        return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Невірний логін або пароль'
         });
     }
@@ -1462,7 +1476,7 @@ app.post('/auth/login', validate({ body: loginBody }), (req, res) => {
         { expiresIn: '8h' }
     );
 
-    return res.status(200).json({
+    return res.status(HTTP_STATUS.OK).json({
         token,
         tokenType: 'Bearer',
         expiresIn: 28800,
@@ -1481,7 +1495,7 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
 
     // Менеджер може створювати тільки батьків
     if (req.user.role === 'manager' && role !== 'parent') {
-        return res.status(403).json({
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
             error: 'Менеджер може створювати лише користувачів із роллю parent'
         });
     }
@@ -1493,7 +1507,7 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
         ).get(normalizedParentId);
 
         if (!parent) {
-            return res.status(404).json({
+            return res.status(HTTP_STATUS.NOT_FOUND).json({
                 error: 'Батька не знайдено'
             });
         }
@@ -1503,13 +1517,13 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
         ).get(normalizedEmployeeId);
 
         if (!employee) {
-            return res.status(404).json({
+            return res.status(HTTP_STATUS.NOT_FOUND).json({
                 error: 'Працівника не знайдено'
             });
         }
 
         if (employee.position !== 'teacher') {
-            return res.status(400).json({
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({
                 error: 'Працівник повинен мати посаду teacher'
             });
         }
@@ -1521,7 +1535,7 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
     ).get(login);
 
     if (existingUser) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Користувач із таким логіном уже існує'
         });
     }
@@ -1540,7 +1554,7 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
             normalizedEmployeeId
         );
 
-        return res.status(201).json({
+        return res.status(HTTP_STATUS.CREATED).json({
             id: Number(result.lastInsertRowid),
             login,
             role,
@@ -1549,14 +1563,14 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ bod
         });
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Користувач із таким логіном уже існує'
             });
         }
 
         console.error('User creation failed:', error);
 
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Не вдалося створити користувача'
         });
     }
@@ -1570,7 +1584,7 @@ app.get('/users', authenticate, requireRole('admin'), (req, res) => {
         ORDER BY id
     `).all();
 
-    return res.status(200).json(users);
+    return res.status(HTTP_STATUS.OK).json(users);
 });
 
 // DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
@@ -1579,7 +1593,7 @@ app.delete('/users/:id', authenticate, requireRole('admin'), validate({ params: 
     const { id } = req.valid.params;
 
     if (id === req.user.id) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Не можна видалити власний акаунт'
         });
     }
@@ -1587,14 +1601,14 @@ app.delete('/users/:id', authenticate, requireRole('admin'), validate({ params: 
     const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
 
     if (!user) {
-        return res.status(404).json({
+        return res.status(HTTP_STATUS.NOT_FOUND).json({
             error: 'Користувача не знайдено'
         });
     }
 
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
 
-    return res.status(204).send();
+    return res.status(HTTP_STATUS.NO_CONTENT).send();
 });
 
 
@@ -1606,7 +1620,7 @@ app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) =>
         'SELECT * FROM parents'
     ).all();
 
-    res.status(200).json(parents);
+    res.status(HTTP_STATUS.OK).json(parents);
 });
 
 // GET /parents/:id - отримати батька за ID
@@ -1618,10 +1632,10 @@ app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), validate(
     ).get(id);
 
     if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Батька не знайдено' });
     }
 
-    res.status(200).json(parent);
+    res.status(HTTP_STATUS.OK).json(parent);
 });
 
 // POST /parents - створити батька
@@ -1642,7 +1656,7 @@ app.post('/parents', authenticate, requireRole('admin', 'manager'), validate({ b
         'SELECT * FROM parents WHERE id = ?'
     ).get(result.lastInsertRowid);
 
-    res.status(201).json(parent);
+    res.status(HTTP_STATUS.CREATED).json(parent);
 });
 
 // PATCH /parents/:id - оновити батька
@@ -1655,7 +1669,7 @@ app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), validat
     ).get(id);
 
     if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Батька не знайдено' });
     }
 
     const fullName = data.fullName !== undefined
@@ -1684,7 +1698,7 @@ app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), validat
         'SELECT * FROM parents WHERE id = ?'
     ).get(id);
 
-    res.status(200).json(updatedParent);
+    res.status(HTTP_STATUS.OK).json(updatedParent);
 });
 
 // DELETE /parents/:id - видалити батька
@@ -1696,7 +1710,7 @@ app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params
     ).get(id);
 
     if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Батька не знайдено' });
     }
 
     const hasChildren = db.prepare(
@@ -1708,7 +1722,7 @@ app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params
     ).get(id);
 
     if (hasChildren || hasAccount) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Неможливо видалити батька, оскільки існують пов’язані записи'
         });
     }
@@ -1721,7 +1735,7 @@ app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params
         ).run(id);
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Батько має пов’язані записи'
             });
         }
@@ -1729,7 +1743,7 @@ app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params
         throw error;
     }
 
-    res.status(204).send();
+    res.status(HTTP_STATUS.NO_CONTENT).send();
 
 
 });
@@ -1743,7 +1757,7 @@ app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) 
         'SELECT * FROM employees'
     ).all();
 
-    res.status(200).json(employees);
+    res.status(HTTP_STATUS.OK).json(employees);
 });
 
 // GET /employees/:id - отримати працівника за ID
@@ -1755,10 +1769,10 @@ app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), validat
     ).get(id);
 
     if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Працівника не знайдено' });
     }
 
-    res.status(200).json(employee);
+    res.status(HTTP_STATUS.OK).json(employee);
 });
 
 // POST /employees - створити працівника
@@ -1768,7 +1782,7 @@ app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({
     const relationError = validateEmployeeRelations(null, position);
 
     if (relationError) {
-        return res.status(409).json({ error: relationError });
+        return res.status(HTTP_STATUS.CONFLICT).json({ error: relationError });
     }
 
     const result = db.prepare(`
@@ -1784,7 +1798,7 @@ app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({
         'SELECT * FROM employees WHERE id = ?'
     ).get(result.lastInsertRowid);
 
-    res.status(201).json(employee);
+    res.status(HTTP_STATUS.CREATED).json(employee);
 });
 
 // PATCH /employees/:id - оновити працівника
@@ -1797,7 +1811,7 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), valid
     ).get(id);
 
     if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Працівника не знайдено' });
     }
 
     const fullName = data.fullName !== undefined
@@ -1816,7 +1830,7 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), valid
     const relationError = validateEmployeeRelations(id, position);
 
     if (relationError) {
-        return res.status(409).json({ error: relationError });
+        return res.status(HTTP_STATUS.CONFLICT).json({ error: relationError });
     }
 
 
@@ -1830,7 +1844,7 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), valid
         'SELECT * FROM employees WHERE id = ?'
     ).get(id);
 
-    res.status(200).json(updatedEmployee);
+    res.status(HTTP_STATUS.OK).json(updatedEmployee);
 });
 
 // DELETE /employees/:id - видалити працівника
@@ -1842,7 +1856,7 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ para
     ).get(id);
 
     if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Працівника не знайдено' });
     }
 
     const inGroups = db.prepare(`
@@ -1864,7 +1878,7 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ para
     ).get(id);
 
     if (inGroups || inActivities || inSchedules || hasAccount) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: 'Неможливо видалити працівника, оскільки існують пов’язані записи'
         });
     }
@@ -1876,7 +1890,7 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ para
         ).run(id);
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Працівник має пов’язані записи'
             });
         }
@@ -1884,7 +1898,7 @@ app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ para
         throw error;
     }
 
-    res.status(204).send();
+    res.status(HTTP_STATUS.NO_CONTENT).send();
 
 });
 
@@ -1901,7 +1915,7 @@ app.get('/groups', authenticate, (req, res) => {
         const ids = getTeacherGroupIds(user.employeeId);
 
         if (ids.length === 0) {
-            return res.status(200).json([]);
+            return res.status(HTTP_STATUS.OK).json([]);
         }
 
         where.push(`g.id IN (${ids.map(() => '?').join(',')})`);
@@ -1924,7 +1938,7 @@ app.get('/groups', authenticate, (req, res) => {
 
     const groups = db.prepare(sql).all(...params);
 
-    res.status(200).json(groups.map((group) => serializeGroup(group, user)));
+    res.status(HTTP_STATUS.OK).json(groups.map((group) => serializeGroup(group, user)));
 });
 
 // GET /groups/:id
@@ -1934,10 +1948,10 @@ app.get('/groups/:id', authenticate, validate({ params: idParams('групи') }
     const group = db.prepare(`${GROUP_SELECT} WHERE g.id = ?`).get(id);
 
     if (!group || !canViewGroup(req.user, id)) {
-        return res.status(404).json({ error: 'Групу не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Групу не знайдено' });
     }
 
-    res.status(200).json(serializeGroup(group, req.user));
+    res.status(HTTP_STATUS.OK).json(serializeGroup(group, req.user));
 });
 
 // GET /groups/:id/children - діти групи (без доступу для батьків)
@@ -1952,7 +1966,7 @@ app.get(
         const group = db.prepare('SELECT id FROM groups WHERE id = ?').get(id);
 
         if (!group || !canViewGroup(req.user, id)) {
-            return res.status(404).json({ error: 'Групу не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Групу не знайдено' });
         }
 
         const children = db
@@ -1963,7 +1977,7 @@ app.get(
             )
             .all(id);
 
-        res.status(200).json(
+        res.status(HTTP_STATUS.OK).json(
             children.map((child) => serializeChild(child, req.user)),
         );
     },
@@ -1976,7 +1990,7 @@ app.post('/groups', authenticate, requireRole('admin', 'manager'), validate({ bo
     const { total } = db.prepare('SELECT COUNT(*) AS total FROM groups').get();
 
     if (total >= MAX_GROUPS) {
-        return res.status(409).json({
+        return res.status(HTTP_STATUS.CONFLICT).json({
             error: `Досягнуто ліміт кількості груп (${MAX_GROUPS})`,
         });
     }
@@ -2020,7 +2034,7 @@ app.post('/groups', authenticate, requireRole('admin', 'manager'), validate({ bo
             .prepare(`${GROUP_SELECT} WHERE g.id = ?`)
             .get(result.lastInsertRowid);
 
-        res.status(201).json(created);
+        res.status(HTTP_STATUS.CREATED).json(created);
     } catch (dbError) {
         return handleDbError(res, dbError);
     }
@@ -2041,7 +2055,7 @@ app.patch(
             .get(id);
 
         if (!existing) {
-            return res.status(404).json({ error: 'Групу не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Групу не знайдено' });
         }
 
         const group = {
@@ -2078,7 +2092,7 @@ app.patch(
             if (
                 kids.some((kid) => calcAge(kid.birthDate) !== group.ageCategory)
             ) {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'У групі є діти, вік яких не відповідає новій віковій категорії',
                 });
             }
@@ -2106,7 +2120,7 @@ app.patch(
                 .prepare(`${GROUP_SELECT} WHERE g.id = ?`)
                 .get(id);
 
-            res.status(200).json(updated);
+            res.status(HTTP_STATUS.OK).json(updated);
         } catch (dbError) {
             return handleDbError(res, dbError);
         }
@@ -2125,7 +2139,7 @@ app.delete(
         const group = db.prepare('SELECT id FROM groups WHERE id = ?').get(id);
 
         if (!group) {
-            return res.status(404).json({ error: 'Групу не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Групу не знайдено' });
         }
 
         const hasChildren = db
@@ -2137,7 +2151,7 @@ app.delete(
             .get(id);
 
         if (hasChildren || hasSchedule) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Неможливо видалити групу, оскільки існують пов’язані записи',
             });
         }
@@ -2148,7 +2162,7 @@ app.delete(
             return handleDbError(res, dbError);
         }
 
-        res.status(204).send();
+        res.status(HTTP_STATUS.NO_CONTENT).send();
     },
 );
 
@@ -2173,7 +2187,7 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
         const ids = getTeacherGroupIds(user.employeeId);
 
         if (ids.length === 0) {
-            return res.status(200).json([]);
+            return res.status(HTTP_STATUS.OK).json([]);
         }
 
         where.push(`c.groupId IN (${ids.map(() => '?').join(',')})`);
@@ -2196,7 +2210,7 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
 
     const children = db.prepare(sql).all(...params);
 
-    res.status(200).json(children.map((child) => serializeChild(child, user)));
+    res.status(HTTP_STATUS.OK).json(children.map((child) => serializeChild(child, user)));
 });
 
 // GET /children/:id
@@ -2207,10 +2221,10 @@ app.get('/children/:id', authenticate, validate({ params: idParams('дитини
 
     // Для чужих дітей повертаємо 404, щоб не розкривати їх існування
     if (!child || !canViewChild(req.user, child)) {
-        return res.status(404).json({ error: 'Дитину не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дитину не знайдено' });
     }
 
-    res.status(200).json(serializeChild(child, req.user));
+    res.status(HTTP_STATUS.OK).json(serializeChild(child, req.user));
 });
 
 // POST /children
@@ -2237,7 +2251,7 @@ app.post(
         const groupId = data.groupId ?? null;
 
         if (isActive === 0 && groupId !== null) {
-            return res.status(400).json({
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({
                 error: 'Неактивну дитину не можна призначити до групи',
             });
         }
@@ -2298,7 +2312,7 @@ app.post(
                 .prepare(`${CHILD_SELECT} WHERE c.id = ?`)
                 .get(childId);
 
-            res.status(201).json(serializeChild(created, req.user));
+            res.status(HTTP_STATUS.CREATED).json(serializeChild(created, req.user));
         } catch (dbError) {
             return handleDbError(res, dbError);
         }
@@ -2321,12 +2335,12 @@ app.patch(
 
         // Чужу дитину батько не бачить: 404, щоб не розкривати її існування
         if (!child || (isParent && !canViewChild(req.user, child))) {
-            return res.status(404).json({ error: 'Дитину не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дитину не знайдено' });
         }
 
         // Батько може змінювати лише notes своєї дитини
         if (isParent && Object.keys(data).some((field) => field !== 'notes')) {
-            return res.status(403).json({
+            return res.status(HTTP_STATUS.FORBIDDEN).json({
                 error: 'Батьки можуть змінювати лише поле notes',
             });
         }
@@ -2339,7 +2353,7 @@ app.patch(
 
         if (newIsActive === 0) {
             if (data.groupId !== undefined && data.groupId !== null) {
-                return res.status(400).json({
+                return res.status(HTTP_STATUS.BAD_REQUEST).json({
                     error: 'Неактивну дитину не можна призначити до групи',
                 });
             }
@@ -2397,7 +2411,7 @@ app.patch(
                 .prepare(`${CHILD_SELECT} WHERE c.id = ?`)
                 .get(id);
 
-            res.status(200).json(serializeChild(updated, req.user));
+            res.status(HTTP_STATUS.OK).json(serializeChild(updated, req.user));
         } catch (dbError) {
             return handleDbError(res, dbError);
         }
@@ -2420,7 +2434,7 @@ app.put(
             .get(id);
 
         if (!child) {
-            return res.status(404).json({ error: 'Дитину не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дитину не знайдено' });
         }
 
         const parentsError = checkParentsExist(
@@ -2461,7 +2475,7 @@ app.put(
                 .prepare(`${CHILD_SELECT} WHERE c.id = ?`)
                 .get(id);
 
-            res.status(200).json(serializeChild(updated, req.user));
+            res.status(HTTP_STATUS.OK).json(serializeChild(updated, req.user));
         } catch (dbError) {
             return handleDbError(res, dbError);
         }
@@ -2482,7 +2496,7 @@ app.delete(
             .get(id);
 
         if (!child) {
-            return res.status(404).json({ error: 'Дитину не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дитину не знайдено' });
         }
 
         try {
@@ -2492,7 +2506,7 @@ app.delete(
             return handleDbError(res, dbError);
         }
 
-        res.status(204).send();
+        res.status(HTTP_STATUS.NO_CONTENT).send();
     },
 );
 
@@ -2507,10 +2521,10 @@ app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
             ORDER BY id ASC
         `).all();
 
-        return res.status(200).json(rooms);
+        return res.status(HTTP_STATUS.OK).json(rooms);
     } catch (error) {
         console.error('Не вдалося отримати список кімнат:', error);
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Не вдалося отримати список кімнат'
         });
     }
@@ -2527,15 +2541,15 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ 
         `).get(id);
 
         if (!room) {
-            return res.status(404).json({
+            return res.status(HTTP_STATUS.NOT_FOUND).json({
                 error: 'Кімнату не знайдено'
             });
         }
 
-        return res.status(200).json(room);
+        return res.status(HTTP_STATUS.OK).json(room);
     } catch (error) {
         console.error('Failed to fetch room:', error);
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2556,17 +2570,17 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ bod
             WHERE id = ?
         `).get(result.lastInsertRowid);
 
-        return res.status(201).json(room);
+        return res.status(HTTP_STATUS.CREATED).json(room);
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Кімната з такою назвою вже існує'
             });
         }
 
         console.error('Failed to create room:', error);
 
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2584,7 +2598,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate(
         `).get(id);
 
         if (!existing) {
-            return res.status(404).json({ error: 'Кімнату не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Кімнату не знайдено' });
         }
 
         const name = body.name ?? existing.name;
@@ -2599,7 +2613,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate(
             `).get(id);
 
             if (group) {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Кімната закріплена за групою'
                 });
             }
@@ -2613,7 +2627,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate(
             `).get(id);
 
             if (activity) {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Кімната закріплена за дисципліною'
                 });
             }
@@ -2631,17 +2645,17 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate(
             WHERE id = ?
         `).get(id);
 
-        return res.status(200).json(updated);
+        return res.status(HTTP_STATUS.OK).json(updated);
 
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Кімната з такою назвою вже існує'
             });
         }
 
         console.error('Failed to update room:', error);
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2656,7 +2670,7 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: 
         `).get(id);
 
         if (!room) {
-            return res.status(404).json({
+            return res.status(HTTP_STATUS.NOT_FOUND).json({
                 error: 'Кімнату не знайдено'
             });
         }
@@ -2674,7 +2688,7 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: 
         `).get(id);
 
         if (usedByGroup || usedByActivity || usedBySchedule) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Кімната використовується'
             });
         }
@@ -2683,17 +2697,17 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: 
             DELETE FROM rooms WHERE id = ?
         `).run(id);
 
-        return res.status(204).send();
+        return res.status(HTTP_STATUS.NO_CONTENT).send();
 
     } catch (error) {
         if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Кімната використовується'
             });
         }
 
         console.error('Failed to delete room:', error);
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2710,12 +2724,12 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
             ORDER BY id ASC
         `).all();
 
-        return res.status(200).json(activities);
+        return res.status(HTTP_STATUS.OK).json(activities);
 
     } catch (error) {
         console.error('Failed to fetch activities:', error);
 
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2732,17 +2746,17 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), valida
         `).get(id);
 
         if (!activity) {
-            return res.status(404).json({
+            return res.status(HTTP_STATUS.NOT_FOUND).json({
                 error: 'Дисципліну не знайдено'
             });
         }
 
-        return res.status(200).json(activity);
+        return res.status(HTTP_STATUS.OK).json(activity);
 
     } catch (error) {
         console.error('Failed to fetch activity:', error);
 
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2760,13 +2774,13 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), validate(
             `).get(teacherId);
 
             if (!teacher) {
-                return res.status(404).json({
+                return res.status(HTTP_STATUS.NOT_FOUND).json({
                     error: 'Викладача не знайдено'
                 });
             }
 
             if (teacher.position !== 'teacher') {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Працівник не є викладачем'
                 });
             }
@@ -2780,13 +2794,13 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), validate(
             `).get(roomId);
 
             if (!room) {
-                return res.status(404).json({
+                return res.status(HTTP_STATUS.NOT_FOUND).json({
                     error: 'Кімнату не знайдено'
                 });
             }
 
             if (room.type !== 'specialized') {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Для дисципліни потрібна спеціалізована кімната'
                 });
             }
@@ -2803,24 +2817,24 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), validate(
             WHERE id = ?
         `).get(result.lastInsertRowid);
 
-        return res.status(201).json(activity);
+        return res.status(HTTP_STATUS.CREATED).json(activity);
 
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Дисципліна з такою назвою вже існує'
             });
         }
 
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Пов’язаний запис більше не існує'
             });
         }
 
         console.error('Failed to create activity:', error);
 
-        return res.status(500).json({
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
             error: 'Внутрішня помилка сервера'
         });
     }
@@ -2838,7 +2852,7 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), vali
         `).get(id);
 
         if (!existing) {
-            return res.status(404).json({ error: 'Дисципліну не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дисципліну не знайдено' });
         }
 
         const name = Object.hasOwn(body, 'name') ? body.name : existing.name;
@@ -2857,11 +2871,11 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), vali
             `).get(teacherId);
 
             if (!teacher) {
-                return res.status(404).json({ error: 'Викладача не знайдено' });
+                return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Викладача не знайдено' });
             }
 
             if (teacher.position !== 'teacher') {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Працівник не є викладачем'
                 });
             }
@@ -2875,11 +2889,11 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), vali
             `).get(roomId);
 
             if (!room) {
-                return res.status(404).json({ error: 'Кімнату не знайдено' });
+                return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Кімнату не знайдено' });
             }
 
             if (room.type !== 'specialized') {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Для дисципліни потрібна спеціалізована кімната'
                 });
             }
@@ -2897,23 +2911,23 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), vali
             WHERE id = ?
         `).get(id);
 
-        return res.status(200).json(updated);
+        return res.status(HTTP_STATUS.OK).json(updated);
 
     } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Дисципліна з такою назвою вже існує'
             });
         }
 
         if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Пов’язаний запис більше не існує'
             });
         }
 
         console.error('Failed to update activity:', error);
-        return res.status(500).json({ error: 'Внутрішня помилка сервера' });
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
@@ -2926,7 +2940,7 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ par
         `).get(id);
 
         if (!activity) {
-            return res.status(404).json({ error: 'Дисципліну не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дисципліну не знайдено' });
         }
 
         const usedBySchedule = db.prepare(`
@@ -2936,7 +2950,7 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ par
         `).get(id);
 
         if (usedBySchedule) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Дисципліна використовується в розкладі'
             });
         }
@@ -2945,17 +2959,17 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ par
             DELETE FROM activities WHERE id = ?
         `).run(id);
 
-        return res.status(204).send();
+        return res.status(HTTP_STATUS.NO_CONTENT).send();
 
     } catch (error) {
         if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Дисципліна використовується'
             });
         }
 
         console.error('Failed to delete activity:', error);
-        return res.status(500).json({ error: 'Внутрішня помилка сервера' });
+        return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
@@ -2978,17 +2992,17 @@ app.get(
         const child = db.prepare('SELECT * FROM children WHERE id = ?').get(id);
 
         if (!child || !canViewChild(req.user, child)) {
-            return res.status(404).json({ error: 'Дитину не знайдено' });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дитину не знайдено' });
         }
 
         if (req.user.role === 'parent' && child.parentId !== req.user.parentId) {
-            return res.status(403).json({
+            return res.status(HTTP_STATUS.FORBIDDEN).json({
                 error: 'Рахунок доступний лише основному представнику дитини'
             });
         }
 
         if (child.isActive !== 1) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Рахунок для неактивної дитини не формується'
             });
         }
@@ -3011,7 +3025,7 @@ app.get(
             const tuitionAmount = isYearly ? tuition.perYear : tuition.perMonth;
             const mealsAmount = isYearly ? meals.perYear : meals.perMonth;
 
-            return res.status(200).json({
+            return res.status(HTTP_STATUS.OK).json({
                 childId: child.id,
                 fullName: child.fullName,
                 paymentPlan: child.paymentPlan,
@@ -3025,7 +3039,7 @@ app.get(
             });
         } catch (error) {
             if (error instanceof RangeError) {
-                return res.status(409).json({
+                return res.status(HTTP_STATUS.CONFLICT).json({
                     error: 'Неможливо розрахувати рахунок: вік дитини поза діапазоном 2-5 років'
                 });
             }
@@ -3042,9 +3056,9 @@ app.get(
 app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (req, res) => {
     try {
         generateScheduleLogic();
-        res.status(201).json({ message: 'Розклад на тиждень успішно згенеровано.' });
+        res.status(HTTP_STATUS.CREATED).json({ message: 'Розклад на тиждень успішно згенеровано.' });
     } catch (error) {
-        res.status(409).json({ error: error.message });
+        res.status(HTTP_STATUS.CONFLICT).json({ error: error.message });
     }
 });
 
@@ -3054,7 +3068,7 @@ app.get('/groups/:id/schedule', authenticate, validate({ params: idParams('гр�
 
     const groupExists = db.prepare('SELECT 1 FROM groups WHERE id = ?').get(groupId);
     if (!groupExists) {
-        return res.status(404).json({ error: 'Групу не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Групу не знайдено' });
     }
 
     if (req.user.role === 'parent') {
@@ -3068,13 +3082,13 @@ app.get('/groups/:id/schedule', authenticate, validate({ params: idParams('гр�
         `).get(req.user.parentId, req.user.parentId, groupId);
 
         if (!childInGroup) {
-            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
+            return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише групи вашої дитини.' });
         }
     } else if (req.user.role === 'teacher') {
         // Викладач бачить розклад лише тих груп, де він веде заняття
         const teachesInGroup = db.prepare('SELECT 1 FROM schedule_slots WHERE teacherId = ? AND groupId = ? LIMIT 1').get(req.user.employeeId, groupId);
         if (!teachesInGroup) {
-            return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише своїх груп.' });
+            return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Доступ заборонено. Ви можете переглядати розклад лише своїх груп.' });
         }
     }
     // Якщо роль admin або manager — код просто йде далі без блокування
@@ -3090,8 +3104,8 @@ app.get('/groups/:id/schedule', authenticate, validate({ params: idParams('гр�
         ORDER BY s.dayOfWeek, s.startTime
     `).all(groupId);
 
-    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
-    res.status(200).json(schedule);
+    if (!schedule.length) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Розклад не знайдено' });
+    res.status(HTTP_STATUS.OK).json(schedule);
 });
 
 // 3. Отримати розклад для викладача (ТЗ: тільки свій розклад, admin/manager - всі)
@@ -3100,15 +3114,15 @@ app.get('/teachers/:id/schedule', authenticate, validate({ params: idParams('в�
 
     const teacherExists = db.prepare('SELECT 1 FROM employees WHERE id = ?').get(teacherId);
     if (!teacherExists) {
-        return res.status(404).json({ error: 'Викладача не знайдено' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Викладача не знайдено' });
     }
 
     // Перевірка прав доступу за ТЗ
     if (req.user.role === 'parent') {
-        return res.status(403).json({ error: 'Доступ заборонено. Батьки не мають доступу до персональних розкладів викладачів.' });
+        return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Доступ заборонено. Батьки не мають доступу до персональних розкладів викладачів.' });
     } else if (req.user.role === 'teacher' && req.user.employeeId !== teacherId) {
         // Викладач бачить тільки свій розклад
-        return res.status(403).json({ error: 'Доступ заборонено. Ви можете переглядати лише власний розклад.' });
+        return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Доступ заборонено. Ви можете переглядати лише власний розклад.' });
     }
     // admin та manager проходять без додаткових перевірок
 
@@ -3123,8 +3137,8 @@ app.get('/teachers/:id/schedule', authenticate, validate({ params: idParams('в�
         ORDER BY s.dayOfWeek, s.startTime
     `).all(teacherId);
 
-    if (!schedule.length) return res.status(404).json({ error: 'Розклад не знайдено' });
-    res.status(200).json(schedule);
+    if (!schedule.length) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Розклад не знайдено' });
+    res.status(HTTP_STATUS.OK).json(schedule);
 });
 
 // 4. Оновити слот розкладу (перенести урок)
@@ -3135,18 +3149,18 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         // За ТЗ: спочатку перевіряємо існування (404), тому тіло перевіряємо
         // схемою тут, після пошуку слоту, а не в middleware validate()
         const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
-        if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
+        if (!currentSlot) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Слот не знайдено' });
 
         const parsedBody = moveSlotBody.safeParse(req.body);
         if (!parsedBody.success) {
-            return res.status(400).json({ error: firstIssueMessage(parsedBody.error) });
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: firstIssueMessage(parsedBody.error) });
         }
 
         const { startTime, dayOfWeek } = parsedBody.data;
 
         // Перевірка: вчитель може міняти тільки свої заняття (403)
         if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
-            return res.status(403).json({ error: 'Ви можете змінювати лише власні заняття.' });
+            return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Ви можете змінювати лише власні заняття.' });
         }
 
         // Перевірка колізій через функцію Громова
@@ -3160,7 +3174,7 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         }, slotId);
 
         if (conflict) {
-            return res.status(409).json({
+            return res.status(HTTP_STATUS.CONFLICT).json({
                 error: 'Колізія розкладу: час вже зайнятий',
                 type: conflict.type,
                 slotId: conflict.slotId
@@ -3173,14 +3187,14 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
             WHERE id = ?
         `).run(startTime, dayOfWeek, slotId);
 
-        res.status(200).json({ message: 'Слот успішно оновлено' });
+        res.status(HTTP_STATUS.OK).json({ message: 'Слот успішно оновлено' });
 
     } catch (error) {
         // Перехоплення унікальності на рівні БД
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
+            return res.status(HTTP_STATUS.CONFLICT).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
         }
-        res.status(500).json({ error: error.message });
+        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
     }
 });
 
@@ -3193,12 +3207,12 @@ app.get('/groups/:id/profit', authenticate, requireRole('admin'), validate({ par
 
     try {
         const profitData = calcGroupProfit(id);
-        res.status(200).json(profitData);
+        res.status(HTTP_STATUS.OK).json(profitData);
     } catch (error) {
         if (error.message === 'Групу не знайдено') {
-            return res.status(404).json({ error: error.message });
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: error.message });
         }
-        res.status(500).json({ error: error.message });
+        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
     }
 });
 
@@ -3206,9 +3220,9 @@ app.get('/groups/:id/profit', authenticate, requireRole('admin'), validate({ par
 app.get('/admin/profit', authenticate, requireRole('admin'), (req, res) => {
     try {
         const profitData = calcKindergartenProfit();
-        res.status(200).json(profitData);
+        res.status(HTTP_STATUS.OK).json(profitData);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
     }
 });
 
@@ -3221,7 +3235,7 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query:
     const forecast = calcForecast(options);
 
     if (forecast.tooManyGroups) {
-        return res.status(400).json({
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
             error: `Для ${children} дітей по ${groupSize} у групі потрібно ${forecast.groups} груп, а максимум ${FORECAST_MAX_GROUPS}`
         });
     }
@@ -3247,7 +3261,7 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query:
             : { groupSize: size, groups: result.groups.count, rooms: result.rooms.total, netProfit: result.netProfit };
     });
 
-    return res.status(200).json({ ...forecast, breakEvenChildren, comparison });
+    return res.status(HTTP_STATUS.OK).json({ ...forecast, breakEvenChildren, comparison });
 });
 
 
@@ -3257,7 +3271,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     try {
         db.prepare('SELECT 1').get();
 
-        res.status(200).json({
+        res.status(HTTP_STATUS.OK).json({
             status: 'ok',
             database: 'connected',
             message: 'Kindergarten API працює'
@@ -3265,7 +3279,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     } catch (error) {
         console.error('Database health check failed:', error);
 
-        res.status(503).json({
+        res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
             error: 'База даних недоступна'
         });
     }
@@ -3280,7 +3294,7 @@ app.get(['/health', '/api/health'], (req, res) => {
 // ---------- 404 - неіснуючий маршрут ----------
 
 app.use((req, res) => {
-    res.status(404).json({
+    res.status(HTTP_STATUS.NOT_FOUND).json({
         error: 'Маршрут не знайдено'
     });
 });
@@ -3292,16 +3306,16 @@ app.use((err, req, res, next) => {
 
     // Некоректний JSON у тілі запиту
     if (err instanceof SyntaxError &&
-        err.status === 400 &&
+        err.status === HTTP_STATUS.BAD_REQUEST &&
         'body' in err) {
 
-        return res.status(400).json({
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
             error: 'Некоректний формат JSON'
         });
     }
 
     // Інші непередбачені помилки
-    return res.status(500).json({
+    return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
         error: 'Внутрішня помилка сервера'
     });
 });
