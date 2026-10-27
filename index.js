@@ -850,12 +850,12 @@ function checkGroupRelations(group, groupId) {
             .get(group.roomId);
 
         if (!room) {
-            return { status: 400, error: 'Кімнату не знайдено' };
+            return { status: HTTP_STATUS.BAD_REQUEST, error: 'Кімнату не знайдено' };
         }
 
         if (room.type !== 'base') {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Групі можна призначити лише базову кімнату',
             };
         }
@@ -866,7 +866,7 @@ function checkGroupRelations(group, groupId) {
 
         if (taken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Кімната вже закріплена за іншою групою',
             };
         }
@@ -879,7 +879,7 @@ function checkGroupRelations(group, groupId) {
 
         if (!educator || educator.position !== 'educator') {
             return {
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 error: 'Вихователь не знайдений або має іншу посаду',
             };
         }
@@ -890,7 +890,7 @@ function checkGroupRelations(group, groupId) {
 
         if (educatorTaken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Вихователь вже закріплений за іншою групою',
             };
         }
@@ -903,7 +903,7 @@ function checkGroupRelations(group, groupId) {
 
         if (!assistant || assistant.position !== 'assistant') {
             return {
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 error: 'Помічник не знайдений або має іншу посаду',
             };
         }
@@ -914,7 +914,7 @@ function checkGroupRelations(group, groupId) {
 
         if (assistantTaken) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: 'Помічник вже закріплений за іншою групою',
             };
         }
@@ -1012,7 +1012,7 @@ function checkParentsExist(parentId, guardianIds) {
 
     if (cnt !== all.length) {
         return {
-            status: 400,
+            status: HTTP_STATUS.BAD_REQUEST,
             error: 'Одного або кількох представників не знайдено',
         };
     }
@@ -1032,7 +1032,7 @@ function checkGroupAssignment(
         .get(groupId);
 
     if (!group) {
-        return { status: 400, error: 'Групу не знайдено' };
+        return { status: HTTP_STATUS.BAD_REQUEST, error: 'Групу не знайдено' };
     }
 
     if (checkAge && ENFORCE_AGE_MATCH) {
@@ -1040,7 +1040,7 @@ function checkGroupAssignment(
 
         if (age !== group.ageCategory) {
             return {
-                status: 409,
+                status: HTTP_STATUS.CONFLICT,
                 error: `Вік дитини (${age}) не відповідає віковій категорії групи (${group.ageCategory})`,
             };
         }
@@ -1055,7 +1055,7 @@ function checkGroupAssignment(
             .get(groupId, childId ?? 0);
 
         if (cnt >= group.capacity) {
-            return { status: 409, error: 'Група заповнена' };
+            return { status: HTTP_STATUS.CONFLICT, error: 'Група заповнена' };
         }
     }
 
@@ -3306,7 +3306,7 @@ app.use((err, req, res, next) => {
 
     // Некоректний JSON у тілі запиту
     if (err instanceof SyntaxError &&
-        err.status === 400 &&
+        err.status === HTTP_STATUS.BAD_REQUEST &&
         'body' in err) {
 
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
