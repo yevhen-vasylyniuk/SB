@@ -4,6 +4,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { z } = require('zod');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -313,29 +314,83 @@ function seedDatabase() {
 seedDatabase();
 
 
-// ---------- Спільна валідація (використовується в усіх блоках) ----------
+// ---------- Спільна валідація (Zod) ----------
+// Вхідні дані (params, query, body) перевіряються схемами Zod у middleware
+// validate() до виконання маршруту. Схеми сутностей лежать у своїх блоках,
+// тут лише спільні будівельні елементи. Помилка: 400 { error: "<повідомлення схеми>" }.
+// Розібрані значення (з обрізаними пробілами, числами замість рядків) лежать
+// у req.valid.params, req.valid.query і req.valid.body.
 
-// ID із шляху або запиту: лише рядок із десяткових цифр без ведучого нуля
-// й без знака ("1.0", "01", "+1", "1e2", "0x1", " 1" відхиляються).
-// Повертає додатне ціле число або null.
-function parseId(raw) {
-    if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) {
-        return null;
-    }
+// ID у шляху або query: рядок із десяткових цифр без ведучого нуля й без знака
+// ("1.0", "01", "+1", "1e2", "0x1", " 1" відхиляються); результат це число.
+const idParam = (message) =>
+    z.string(message)
+        .regex(/^[1-9]\d*$/, message)
+        .transform(Number)
+        .refine(Number.isSafeInteger, message);
 
-    const id = Number(raw);
+// Параметри шляху виду /:id з повідомленням "Некоректний ID <що>".
+const idParams = (what) => z.object({ id: idParam(`Некоректний ID ${what}`) });
 
-    return Number.isSafeInteger(id) ? id : null;
+// ID у тілі запиту: додатне ціле JSON-число.
+const idField = (message) => z.number(message).int(message).positive(message);
+
+// Рядок без пробілів по краях: обов'язковий і непорожній.
+const requiredText = (message) => z.string(message).trim().min(1, message);
+
+// Рядок без пробілів по краях: необов'язковий, може бути null.
+const optionalText = (message) => z.string(message).trim().nullish();
+
+// Тіло запиту без зайвих полів. Не-об'єкт (null, масив, відсутнє тіло) дає
+// invalidBody, невідоме поле дає unknownField(назва поля).
+function strictBody(shape, {
+    invalidBody = 'Некоректне тіло запиту',
+    unknownField = (key) => `Невідоме поле: ${key}`
+} = {}) {
+    return z.strictObject(shape, {
+        error: (issue) => {
+            if (issue.code === 'invalid_type') return invalidBody;
+            if (issue.code === 'unrecognized_keys') return unknownField(issue.keys[0]);
+        }
+    });
 }
 
-// Тіло запиту має бути звичайним JSON-об'єктом (не null і не масив).
-function isPlainObject(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+// Тіло PATCH: усі поля необов'язкові, але хоча б одне має бути передане.
+function patchBody(shape, { invalidBody = 'Немає даних для оновлення', ...options } = {}) {
+    return strictBody(shape, { invalidBody, ...options })
+        .partial()
+        .refine((data) => Object.keys(data).length > 0, invalidBody);
 }
 
-// Додатне ціле число, яке JavaScript зберігає точно (для ID у тілі запиту).
-function isPositiveInt(value) {
-    return Number.isSafeInteger(value) && value > 0;
+// Перше повідомлення схеми; невідоме поле, як і раніше, має пріоритет.
+function firstIssueMessage(error) {
+    const issue = error.issues.find((item) => item.code === 'unrecognized_keys') ?? error.issues[0];
+
+    return issue.message;
+}
+
+// Middleware: validate({ params, query, body }) перевіряє частини запиту
+// в цьому порядку й кладе результат у req.valid.
+function validate(schemas) {
+    return (req, res, next) => {
+        req.valid = {};
+
+        for (const part of ['params', 'query', 'body']) {
+            if (!schemas[part]) {
+                continue;
+            }
+
+            const result = schemas[part].safeParse(req[part]);
+
+            if (!result.success) {
+                return res.status(400).json({ error: firstIssueMessage(result.error) });
+            }
+
+            req.valid[part] = result.data;
+        }
+
+        next();
+    };
 }
 
 
@@ -349,19 +404,15 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
     throw new Error('Set JWT_SECRET (at least 32 characters) in .env');
 }
 
-app.post('/auth/login', (req, res) => {
-    const { login, password } = req.body || {};
+const LOGIN_REQUIRED = 'Вкажіть логін і пароль';
 
-    if (
-        typeof login !== 'string' ||
-        !login.trim() ||
-        typeof password !== 'string' ||
-        !password
-    ) {
-        return res.status(400).json({
-            error: 'Вкажіть логін і пароль'
-        });
-    }
+const loginBody = z.object({
+    login: requiredText(LOGIN_REQUIRED),
+    password: z.string(LOGIN_REQUIRED).min(1, LOGIN_REQUIRED)
+}, LOGIN_REQUIRED);
+
+app.post('/auth/login', validate({ body: loginBody }), (req, res) => {
+    const { login, password } = req.valid.body;
 
     const user = db.prepare(`
         SELECT id, login, passwordHash, role
@@ -467,51 +518,53 @@ function requireRole(...allowedRoles) {
     };
 }
 
-app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const data = req.body;
+// Акаунт: логін без пробілів по краях, пароль від 12 символів, а зв'язки
+// залежать від ролі (parent: parentId, teacher: employeeId, admin і manager: жодного).
+const userCredentials = {
+    login: z.string('Вкажіть коректний логін')
+        .refine((value) => value.trim() !== '' && value === value.trim(), 'Вкажіть коректний логін'),
+    password: z.string('Пароль повинен містити щонайменше 12 символів')
+        .min(12, 'Пароль повинен містити щонайменше 12 символів')
+};
 
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return res.status(400).json({
-            error: 'Некоректні дані користувача'
-        });
-    }
+const userBodyOptions = {
+    invalidBody: 'Некоректні дані користувача',
+    unknownField: () => 'Передано невідомі поля'
+};
 
-    const { login, password, role, parentId, employeeId } = data;
-    const allowedRoles = ['admin', 'manager', 'parent', 'teacher'];
+const NO_LINKS = 'Для admin і manager зв’язки parentId та employeeId заборонені';
+const PARENT_LINK = 'Для parent потрібен коректний parentId';
+const TEACHER_LINK = 'Для teacher потрібен коректний employeeId';
 
-    // Перевірка дозволених полів
-    const allowedFields = ['login', 'password', 'role', 'parentId', 'employeeId'];
+const createUserBody = z.discriminatedUnion('role', [
+    strictBody({
+        ...userCredentials,
+        role: z.literal('parent'),
+        parentId: idField(PARENT_LINK),
+        employeeId: z.null(PARENT_LINK).optional()
+    }, userBodyOptions),
+    strictBody({
+        ...userCredentials,
+        role: z.literal('teacher'),
+        parentId: z.null(TEACHER_LINK).optional(),
+        employeeId: idField(TEACHER_LINK)
+    }, userBodyOptions),
+    strictBody({
+        ...userCredentials,
+        role: z.enum(['admin', 'manager']),
+        parentId: z.null(NO_LINKS).optional(),
+        employeeId: z.null(NO_LINKS).optional()
+    }, userBodyOptions)
+], {
+    error: (issue) => issue.code === 'invalid_type'
+        ? userBodyOptions.invalidBody
+        : 'Недопустима роль користувача'
+});
 
-    if (Object.keys(data).some(field => !allowedFields.includes(field))) {
-        return res.status(400).json({
-            error: 'Передано невідомі поля'
-        });
-    }
-
-    // Перевірка логіна
-    if (
-        typeof login !== 'string' ||
-        !login.trim() ||
-        login !== login.trim()
-    ) {
-        return res.status(400).json({
-            error: 'Вкажіть коректний логін'
-        });
-    }
-
-    // Перевірка пароля
-    if (typeof password !== 'string' || password.length < 12) {
-        return res.status(400).json({
-            error: 'Пароль повинен містити щонайменше 12 символів'
-        });
-    }
-
-    // Перевірка ролі
-    if (!allowedRoles.includes(role)) {
-        return res.status(400).json({
-            error: 'Недопустима роль користувача'
-        });
-    }
+app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ body: createUserBody }), (req, res) => {
+    const { login, password, role } = req.valid.body;
+    const normalizedParentId = req.valid.body.parentId ?? null;
+    const normalizedEmployeeId = req.valid.body.employeeId ?? null;
 
     // Менеджер може створювати тільки батьків
     if (req.user.role === 'manager' && role !== 'parent') {
@@ -520,21 +573,8 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => 
         });
     }
 
-    const normalizedParentId = parentId == null ? null : parentId;
-    const normalizedEmployeeId = employeeId == null ? null : employeeId;
-
-    // Перевірка зв'язків відповідно до ролі
+    // Перевірка зв'язків у базі даних (форму зв'язків уже перевірила схема)
     if (role === 'parent') {
-        if (
-            !Number.isInteger(normalizedParentId) ||
-            normalizedParentId <= 0 ||
-            normalizedEmployeeId !== null
-        ) {
-            return res.status(400).json({
-                error: 'Для parent потрібен коректний parentId'
-            });
-        }
-
         const parent = db.prepare(
             'SELECT id FROM parents WHERE id = ?'
         ).get(normalizedParentId);
@@ -545,16 +585,6 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => 
             });
         }
     } else if (role === 'teacher') {
-        if (
-            !Number.isInteger(normalizedEmployeeId) ||
-            normalizedEmployeeId <= 0 ||
-            normalizedParentId !== null
-        ) {
-            return res.status(400).json({
-                error: 'Для teacher потрібен коректний employeeId'
-            });
-        }
-
         const employee = db.prepare(
             'SELECT id, position FROM employees WHERE id = ?'
         ).get(normalizedEmployeeId);
@@ -570,13 +600,6 @@ app.post('/users', authenticate, requireRole('admin', 'manager'), (req, res) => 
                 error: 'Працівник повинен мати посаду teacher'
             });
         }
-    } else if (
-        normalizedParentId !== null ||
-        normalizedEmployeeId !== null
-    ) {
-        return res.status(400).json({
-            error: 'Для admin і manager зв’язки parentId та employeeId заборонені'
-        });
     }
 
     // Перевірка унікальності логіна
@@ -639,14 +662,8 @@ app.get('/users', authenticate, requireRole('admin'), (req, res) => {
 
 // DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
 // адміністратор не може видалити сам себе
-app.delete('/users/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({
-            error: 'Некоректний ID користувача'
-        });
-    }
+app.delete('/users/:id', authenticate, requireRole('admin'), validate({ params: idParams('користувача') }), (req, res) => {
+    const { id } = req.valid.params;
 
     if (id === req.user.id) {
         return res.status(409).json({
@@ -673,31 +690,15 @@ app.delete('/users/:id', authenticate, requireRole('admin'), (req, res) => {
 
 
 
-function validateParent(data, isUpdate = false) {
-    const allowedFields = ['fullName', 'phone', 'email', 'relationNote'];
+const parentFields = {
+    fullName: requiredText('Вкажіть коректне ПІБ батька'),
+    phone: optionalText('Некоректне поле: phone'),
+    email: optionalText('Некоректне поле: email'),
+    relationNote: optionalText('Некоректне поле: relationNote')
+};
 
-    for (const field of Object.keys(data)) {
-        if (!allowedFields.includes(field)) {
-            return `Невідоме поле: ${field}`;
-        }
-    }
-
-    if (!isUpdate || data.fullName !== undefined) {
-        if (typeof data.fullName !== 'string' || data.fullName.trim() === '') {
-            return 'Вкажіть коректне ПІБ батька';
-        }
-    }
-
-    for (const field of ['phone', 'email', 'relationNote']) {
-        if (data[field] !== undefined &&
-            data[field] !== null &&
-            typeof data[field] !== 'string') {
-            return `Некоректне поле: ${field}`;
-        }
-    }
-
-    return null;
-}
+const createParentBody = strictBody(parentFields);
+const updateParentBody = patchBody(parentFields);
 
 
 // GET /parents - отримати всіх батьків
@@ -710,12 +711,8 @@ app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) =>
 });
 
 // GET /parents/:id - отримати батька за ID
-app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID батька' });
-    }
+app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const parent = db.prepare(
         'SELECT * FROM parents WHERE id = ?'
@@ -729,29 +726,17 @@ app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res
 });
 
 // POST /parents - створити батька
-app.post('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const data = req.body;
-
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return res.status(400).json({ error: 'Некоректне тіло запиту' });
-    }
-
-    const error = validateParent(data);
-
-    if (error) {
-        return res.status(400).json({ error });
-    }
-
-    const { fullName, phone, email, relationNote } = data;
+app.post('/parents', authenticate, requireRole('admin', 'manager'), validate({ body: createParentBody }), (req, res) => {
+    const { fullName, phone, email, relationNote } = req.valid.body;
 
     const result = db.prepare(`
         INSERT INTO parents (fullName, phone, email, relationNote)
         VALUES (?, ?, ?, ?)
     `).run(
-        fullName.trim(),
-        phone?.trim() || null,
-        email?.trim() || null,
-        relationNote?.trim() || null
+        fullName,
+        phone || null,
+        email || null,
+        relationNote || null
     );
 
     const parent = db.prepare(
@@ -762,12 +747,9 @@ app.post('/parents', authenticate, requireRole('admin', 'manager'), (req, res) =
 });
 
 // PATCH /parents/:id - оновити батька
-app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID батька' });
-    }
+app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька'), body: updateParentBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const data = req.valid.body;
 
     const parent = db.prepare(
         'SELECT * FROM parents WHERE id = ?'
@@ -777,33 +759,20 @@ app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, r
         return res.status(404).json({ error: 'Батька не знайдено' });
     }
 
-    const data = req.body;
-
-    if (!data || typeof data !== 'object' ||
-        Array.isArray(data) || Object.keys(data).length === 0) {
-        return res.status(400).json({ error: 'Немає даних для оновлення' });
-    }
-
-    const error = validateParent(data, true);
-
-    if (error) {
-        return res.status(400).json({ error });
-    }
-
     const fullName = data.fullName !== undefined
-        ? data.fullName.trim()
+        ? data.fullName
         : parent.fullName;
 
     const phone = data.phone !== undefined
-        ? data.phone?.trim() || null
+        ? data.phone || null
         : parent.phone;
 
     const email = data.email !== undefined
-        ? data.email?.trim() || null
+        ? data.email || null
         : parent.email;
 
     const relationNote = data.relationNote !== undefined
-        ? data.relationNote?.trim() || null
+        ? data.relationNote || null
         : parent.relationNote;
 
     db.prepare(`
@@ -820,12 +789,8 @@ app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, r
 });
 
 // DELETE /parents/:id - видалити батька
-app.delete('/parents/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID батька' });
-    }
+app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params: idParams('батька') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const parent = db.prepare(
         'SELECT * FROM parents WHERE id = ?'
@@ -871,36 +836,16 @@ app.delete('/parents/:id', authenticate, requireRole('admin'), (req, res) => {
 });
 
 
-function validateEmployee(data, isUpdate = false) {
-    const allowedFields = ['fullName', 'position', 'salaryRate'];
-    const positions = ['manager', 'educator', 'assistant', 'teacher'];
+const SALARY_RATE_ERROR = 'Зарплата повинна бути невід’ємним цілим числом';
 
-    for (const field of Object.keys(data)) {
-        if (!allowedFields.includes(field)) {
-            return `Невідоме поле: ${field}`;
-        }
-    }
+const employeeFields = {
+    fullName: requiredText('Вкажіть коректне ПІБ працівника'),
+    position: z.enum(['manager', 'educator', 'assistant', 'teacher'], 'Некоректна посада працівника'),
+    salaryRate: z.number(SALARY_RATE_ERROR).int(SALARY_RATE_ERROR).min(0, SALARY_RATE_ERROR).nullish()
+};
 
-    if (!isUpdate || data.fullName !== undefined) {
-        if (typeof data.fullName !== 'string' || data.fullName.trim() === '') {
-            return 'Вкажіть коректне ПІБ працівника';
-        }
-    }
-
-    if (!isUpdate || data.position !== undefined) {
-        if (!positions.includes(data.position)) {
-            return 'Некоректна посада працівника';
-        }
-    }
-
-    if (data.salaryRate !== undefined &&
-        data.salaryRate !== null &&
-        (!Number.isSafeInteger(data.salaryRate) || data.salaryRate < 0)) {
-        return 'Зарплата повинна бути невід’ємним цілим числом';
-    }
-
-    return null;
-}
+const createEmployeeBody = strictBody(employeeFields);
+const updateEmployeeBody = patchBody(employeeFields);
 
 
 function validateEmployeeRelations(id, position) {
@@ -964,12 +909,8 @@ app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) 
 });
 
 // GET /employees/:id - отримати працівника за ID
-app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID працівника' });
-    }
+app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const employee = db.prepare(
         'SELECT * FROM employees WHERE id = ?'
@@ -983,34 +924,20 @@ app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, r
 });
 
 // POST /employees - створити працівника
-app.post('/employees', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const data = req.body;
+app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({ body: createEmployeeBody }), (req, res) => {
+    const { fullName, position, salaryRate } = req.valid.body;
 
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return res.status(400).json({ error: 'Некоректне тіло запиту' });
-    }
-
-    const error = validateEmployee(data);
-
-    if (error) {
-        return res.status(400).json({ error });
-    }
-
-
-    const relationError = validateEmployeeRelations(null, data.position);
+    const relationError = validateEmployeeRelations(null, position);
 
     if (relationError) {
         return res.status(409).json({ error: relationError });
     }
 
-
-    const { fullName, position, salaryRate } = data;
-
     const result = db.prepare(`
         INSERT INTO employees (fullName, position, salaryRate)
         VALUES (?, ?, ?)
     `).run(
-        fullName.trim(),
+        fullName,
         position,
         salaryRate ?? null
     );
@@ -1023,12 +950,9 @@ app.post('/employees', authenticate, requireRole('admin', 'manager'), (req, res)
 });
 
 // PATCH /employees/:id - оновити працівника
-app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID працівника' });
-    }
+app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника'), body: updateEmployeeBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const data = req.valid.body;
 
     const employee = db.prepare(
         'SELECT * FROM employees WHERE id = ?'
@@ -1038,21 +962,8 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req,
         return res.status(404).json({ error: 'Працівника не знайдено' });
     }
 
-    const data = req.body;
-
-    if (!data || typeof data !== 'object' ||
-        Array.isArray(data) || Object.keys(data).length === 0) {
-        return res.status(400).json({ error: 'Немає даних для оновлення' });
-    }
-
-    const error = validateEmployee(data, true);
-
-    if (error) {
-        return res.status(400).json({ error });
-    }
-
     const fullName = data.fullName !== undefined
-        ? data.fullName.trim()
+        ? data.fullName
         : employee.fullName;
 
     const position = data.position !== undefined
@@ -1085,12 +996,8 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req,
 });
 
 // DELETE /employees/:id - видалити працівника
-app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID працівника' });
-    }
+app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ params: idParams('працівника') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const employee = db.prepare(
         'SELECT * FROM employees WHERE id = ?'
@@ -1158,8 +1065,6 @@ const MAX_GUARDIANS = 9; // максимум додаткових опікуні
 // Таблиця child_parents (опікуни) створюється в блоці 1, у initializeDatabase().
 
 // ---------- Допоміжні функції ----------
-
-// parseId, isPlainObject, isPositiveInt - у спільному блоці валідації (кінець блоку 1).
 
 function toBit(value) {
     return value === true || value === 1 ? 1 : 0;
@@ -1352,60 +1257,22 @@ function serializeChild(child, user) {
 
 // ---------- Групи: валідація ----------
 
-function validateGroupFields(data, isUpdate) {
-    const allowed = [
-        'name',
-        'ageCategory',
-        'capacity',
-        'roomId',
-        'educatorId',
-        'assistantId',
-    ];
+const AGE_CATEGORY_ERROR = `Вікова категорія має бути цілим числом від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE}`;
+const CAPACITY_ERROR = `Місткість має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`;
 
-    for (const field of Object.keys(data)) {
-        if (!allowed.includes(field)) {
-            return `Невідоме поле: ${field}`;
-        }
-    }
+const groupFields = {
+    name: requiredText('Вкажіть коректну назву групи'),
+    ageCategory: z.number(AGE_CATEGORY_ERROR).int(AGE_CATEGORY_ERROR)
+        .min(MIN_CHILD_AGE, AGE_CATEGORY_ERROR).max(MAX_CHILD_AGE, AGE_CATEGORY_ERROR),
+    capacity: z.number(CAPACITY_ERROR).int(CAPACITY_ERROR)
+        .min(1, CAPACITY_ERROR).max(CONFIG.GROUP_MAX_CHILDREN, CAPACITY_ERROR).optional(),
+    roomId: idField('Некоректне поле: roomId').nullish(),
+    educatorId: idField('Некоректне поле: educatorId').nullish(),
+    assistantId: idField('Некоректне поле: assistantId').nullish()
+};
 
-    if (!isUpdate || data.name !== undefined) {
-        if (typeof data.name !== 'string' || data.name.trim() === '') {
-            return 'Вкажіть коректну назву групи';
-        }
-    }
-
-    if (!isUpdate || data.ageCategory !== undefined) {
-        if (
-            !Number.isSafeInteger(data.ageCategory) ||
-            data.ageCategory < 2 ||
-            data.ageCategory > 5
-        ) {
-            return 'Вікова категорія має бути цілим числом від 2 до 5';
-        }
-    }
-
-    if (data.capacity !== undefined) {
-        if (
-            !Number.isSafeInteger(data.capacity) ||
-            data.capacity < 1 ||
-            data.capacity > 20
-        ) {
-            return 'Місткість має бути цілим числом від 1 до 20';
-        }
-    }
-
-    for (const field of ['roomId', 'educatorId', 'assistantId']) {
-        if (
-            data[field] !== undefined &&
-            data[field] !== null &&
-            !isPositiveInt(data[field])
-        ) {
-            return `Некоректне поле: ${field}`;
-        }
-    }
-
-    return null;
-}
+const createGroupBody = strictBody(groupFields);
+const updateGroupBody = patchBody(groupFields);
 
 function checkGroupRelations(group, groupId) {
     if (group.roomId !== null) {
@@ -1526,12 +1393,8 @@ app.get('/groups', authenticate, (req, res) => {
 });
 
 // GET /groups/:id
-app.get('/groups/:id', authenticate, (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID групи' });
-    }
+app.get('/groups/:id', authenticate, validate({ params: idParams('групи') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const group = db.prepare(`${GROUP_SELECT} WHERE g.id = ?`).get(id);
 
@@ -1547,12 +1410,9 @@ app.get(
     '/groups/:id/children',
     authenticate,
     requireRole('admin', 'manager', 'teacher'),
+    validate({ params: idParams('групи') }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID групи' });
-        }
+        const { id } = req.valid.params;
 
         const group = db.prepare('SELECT id FROM groups WHERE id = ?').get(id);
 
@@ -1575,18 +1435,8 @@ app.get(
 );
 
 // POST /groups
-app.post('/groups', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const data = req.body;
-
-    if (!isPlainObject(data)) {
-        return res.status(400).json({ error: 'Некоректне тіло запиту' });
-    }
-
-    const error = validateGroupFields(data, false);
-
-    if (error) {
-        return res.status(400).json({ error });
-    }
+app.post('/groups', authenticate, requireRole('admin', 'manager'), validate({ body: createGroupBody }), (req, res) => {
+    const data = req.valid.body;
 
     const { total } = db.prepare('SELECT COUNT(*) AS total FROM groups').get();
 
@@ -1597,7 +1447,7 @@ app.post('/groups', authenticate, requireRole('admin', 'manager'), (req, res) =>
     }
 
     const group = {
-        name: data.name.trim(),
+        name: data.name,
         ageCategory: data.ageCategory,
         capacity: data.capacity ?? 20,
         roomId: data.roomId ?? null,
@@ -1646,12 +1496,10 @@ app.patch(
     '/groups/:id',
     authenticate,
     requireRole('admin', 'manager'),
+    validate({ params: idParams('групи'), body: updateGroupBody }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID групи' });
-        }
+        const { id } = req.valid.params;
+        const data = req.valid.body;
 
         const existing = db
             .prepare('SELECT * FROM groups WHERE id = ?')
@@ -1661,20 +1509,8 @@ app.patch(
             return res.status(404).json({ error: 'Групу не знайдено' });
         }
 
-        const data = req.body;
-
-        if (!isPlainObject(data) || Object.keys(data).length === 0) {
-            return res.status(400).json({ error: 'Немає даних для оновлення' });
-        }
-
-        const error = validateGroupFields(data, true);
-
-        if (error) {
-            return res.status(400).json({ error });
-        }
-
         const group = {
-            name: data.name !== undefined ? data.name.trim() : existing.name,
+            name: data.name !== undefined ? data.name : existing.name,
             ageCategory: data.ageCategory ?? existing.ageCategory,
             capacity: data.capacity ?? existing.capacity,
             roomId: data.roomId !== undefined ? data.roomId : existing.roomId,
@@ -1747,12 +1583,9 @@ app.delete(
     '/groups/:id',
     authenticate,
     requireRole('admin'),
+    validate({ params: idParams('групи') }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID групи' });
-        }
+        const { id } = req.valid.params;
 
         const group = db.prepare('SELECT id FROM groups WHERE id = ?').get(id);
 
@@ -1786,117 +1619,82 @@ app.delete(
 
 // ---------- Діти: валідація ----------
 
-function validateChild(data, isUpdate) {
-    const allowed = [
-        'fullName',
-        'birthDate',
-        'groupId',
-        'discountPercent',
-        'paymentPlan',
-        'notes',
-        'isActive',
-    ];
+const BIRTH_DATE_FORMAT_ERROR = 'Дата народження має бути у форматі YYYY-MM-DD';
 
-    if (!isUpdate) {
-        allowed.push('parentId', 'guardianIds');
-    }
-
-    for (const field of Object.keys(data)) {
-        if (!allowed.includes(field)) {
-            return field === 'parentId' || field === 'guardianIds'
-                ? 'Представників змінюйте через PUT /children/:id/parents'
-                : `Невідоме поле: ${field}`;
-        }
-    }
-
-    if (!isUpdate || data.fullName !== undefined) {
-        if (typeof data.fullName !== 'string' || data.fullName.trim() === '') {
-            return 'Вкажіть коректне ПІБ дитини';
-        }
-    }
-
-    if (!isUpdate || data.birthDate !== undefined) {
-        if (!isValidDateString(data.birthDate)) {
-            return 'Дата народження має бути у форматі YYYY-MM-DD';
+const childFields = {
+    fullName: requiredText('Вкажіть коректне ПІБ дитини'),
+    birthDate: z.string(BIRTH_DATE_FORMAT_ERROR).superRefine((value, ctx) => {
+        if (!isValidDateString(value)) {
+            return ctx.addIssue({ code: 'custom', message: BIRTH_DATE_FORMAT_ERROR });
         }
 
-        if (data.birthDate > new Date().toISOString().slice(0, 10)) {
-            return 'Дата народження не може бути в майбутньому';
+        if (value > new Date().toISOString().slice(0, 10)) {
+            return ctx.addIssue({
+                code: 'custom',
+                message: 'Дата народження не може бути в майбутньому',
+            });
         }
 
-        const age = calcAge(data.birthDate);
+        const age = calcAge(value);
 
         if (age < MIN_CHILD_AGE || age > MAX_CHILD_AGE) {
-            return `Вік дитини має бути від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE} років (зараз ${age})`;
+            ctx.addIssue({
+                code: 'custom',
+                message: `Вік дитини має бути від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE} років (зараз ${age})`,
+            });
         }
-    }
-
-    if (
-        data.groupId !== undefined &&
-        data.groupId !== null &&
-        !isPositiveInt(data.groupId)
-    ) {
-        return 'Некоректний groupId';
-    }
-
-    if (
-        data.discountPercent !== undefined &&
-        ![0, 10, 20, 30].includes(data.discountPercent)
-    ) {
-        return 'Знижка має бути 0, 10, 20 або 30';
-    }
-
-    if (
-        data.paymentPlan !== undefined &&
-        !['monthly', 'yearly'].includes(data.paymentPlan)
-    ) {
-        return 'paymentPlan має бути monthly або yearly';
-    }
-
-    if (
-        data.notes !== undefined &&
-        data.notes !== null &&
-        typeof data.notes !== 'string'
-    ) {
-        return 'Некоректне поле: notes';
-    }
-
-    if (
-        data.isActive !== undefined &&
-        ![true, false, 0, 1].includes(data.isActive)
-    ) {
-        return 'isActive має бути true або false';
-    }
-
-    return null;
-}
+    }),
+    groupId: idField('Некоректний groupId').nullish(),
+    discountPercent: z.literal(CONFIG.ALLOWED_DISCOUNT_PERCENTS, 'Знижка має бути 0, 10, 20 або 30').optional(),
+    paymentPlan: z.enum(['monthly', 'yearly'], 'paymentPlan має бути monthly або yearly').optional(),
+    notes: optionalText('Некоректне поле: notes'),
+    isActive: z.literal([true, false, 0, 1], 'isActive має бути true або false').optional(),
+};
 
 // Основний представник (платник) і необов’язкові додаткові опікуни
-function validateParentLinks(parentId, guardianIds) {
-    if (!isPositiveInt(parentId)) {
-        return {
-            status: 400,
-            error: 'parentId обов’язковий і має бути додатним цілим числом',
-        };
-    }
+const PARENT_ID_ERROR = 'parentId обов’язковий і має бути додатним цілим числом';
+const GUARDIANS_LIST_ERROR = `guardianIds має бути масивом (до ${MAX_GUARDIANS} елементів)`;
+const GUARDIANS_UNIQUE_ERROR = 'guardianIds мають бути унікальними додатними цілими числами і не містити parentId';
 
-    const extra = guardianIds ?? [];
+const parentLinkFields = {
+    parentId: idField(PARENT_ID_ERROR),
+    guardianIds: z.array(idField(GUARDIANS_UNIQUE_ERROR), GUARDIANS_LIST_ERROR)
+        .max(MAX_GUARDIANS, GUARDIANS_LIST_ERROR).nullish(),
+};
 
-    if (!Array.isArray(extra) || extra.length > MAX_GUARDIANS) {
-        return {
-            status: 400,
-            error: `guardianIds має бути масивом (до ${MAX_GUARDIANS} елементів)`,
-        };
-    }
+const parentsAreUnique = ({ parentId, guardianIds }) => {
+    const all = [parentId, ...(guardianIds ?? [])];
 
-    const all = [parentId, ...extra];
+    return new Set(all).size === all.length;
+};
 
-    if (!extra.every(isPositiveInt) || new Set(all).size !== all.length) {
-        return {
-            status: 400,
-            error: 'guardianIds мають бути унікальними додатними цілими числами і не містити parentId',
-        };
-    }
+const uniqueParentsRule = { path: ['guardianIds'], error: GUARDIANS_UNIQUE_ERROR };
+
+const createChildBody = strictBody({ ...childFields, ...parentLinkFields })
+    .refine(parentsAreUnique, uniqueParentsRule);
+
+// Представників у PATCH змінювати не можна: для цього є PUT /children/:id/parents
+const updateChildBody = patchBody(childFields, {
+    unknownField: (key) => (key === 'parentId' || key === 'guardianIds'
+        ? 'Представників змінюйте через PUT /children/:id/parents'
+        : `Невідоме поле: ${key}`),
+});
+
+// Тіло PUT /children/:id/parents (зайві поля, як і раніше, ігноруються)
+const childParentsBody = z.object(parentLinkFields, 'Некоректне тіло запиту')
+    .refine(parentsAreUnique, uniqueParentsRule);
+
+// Query GET /children?groupId=&isActive=
+const childrenQuery = z.object({
+    groupId: idParam('Некоректний groupId').optional(),
+    isActive: z.enum(['0', '1', 'true', 'false'], 'Некоректний isActive')
+        .transform((value) => (value === '1' || value === 'true' ? 1 : 0))
+        .optional(),
+});
+
+// Усі представники мають існувати в базі даних (форму перевірила схема)
+function checkParentsExist(parentId, guardianIds) {
+    const all = [parentId, ...(guardianIds ?? [])];
 
     const { cnt } = db
         .prepare(
@@ -1960,8 +1758,9 @@ function checkGroupAssignment(
 // ---------- Діти: маршрути ----------
 
 // GET /children?groupId=&isActive=
-app.get('/children', authenticate, (req, res) => {
+app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res) => {
     const { user } = req;
+    const { groupId, isActive } = req.valid.query;
     const where = [];
     const params = [];
 
@@ -1983,26 +1782,14 @@ app.get('/children', authenticate, (req, res) => {
         params.push(...ids);
     }
 
-    if (req.query.groupId !== undefined) {
-        const groupId = parseId(String(req.query.groupId));
-
-        if (groupId === null) {
-            return res.status(400).json({ error: 'Некоректний groupId' });
-        }
-
+    if (groupId !== undefined) {
         where.push('c.groupId = ?');
         params.push(groupId);
     }
 
-    if (req.query.isActive !== undefined) {
-        const value = String(req.query.isActive);
-
-        if (!['0', '1', 'true', 'false'].includes(value)) {
-            return res.status(400).json({ error: 'Некоректний isActive' });
-        }
-
+    if (isActive !== undefined) {
         where.push('c.isActive = ?');
-        params.push(value === '1' || value === 'true' ? 1 : 0);
+        params.push(isActive);
     }
 
     const sql = `${CHILD_SELECT} ${
@@ -2015,12 +1802,8 @@ app.get('/children', authenticate, (req, res) => {
 });
 
 // GET /children/:id
-app.get('/children/:id', authenticate, (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID дитини' });
-    }
+app.get('/children/:id', authenticate, validate({ params: idParams('дитини') }), (req, res) => {
+    const { id } = req.valid.params;
 
     const child = db.prepare(`${CHILD_SELECT} WHERE c.id = ?`).get(id);
 
@@ -2037,20 +1820,11 @@ app.post(
     '/children',
     authenticate,
     requireRole('admin', 'manager'),
+    validate({ body: createChildBody }),
     (req, res) => {
-        const data = req.body;
+        const data = req.valid.body;
 
-        if (!isPlainObject(data)) {
-            return res.status(400).json({ error: 'Некоректне тіло запиту' });
-        }
-
-        const error = validateChild(data, false);
-
-        if (error) {
-            return res.status(400).json({ error });
-        }
-
-        const parentsError = validateParentLinks(
+        const parentsError = checkParentsExist(
             data.parentId,
             data.guardianIds,
         );
@@ -2096,13 +1870,13 @@ app.post(
                 `,
                     )
                     .run(
-                        data.fullName.trim(),
+                        data.fullName,
                         data.birthDate,
                         data.parentId,
                         groupId,
                         data.discountPercent ?? 0,
                         data.paymentPlan ?? 'monthly',
-                        data.notes?.trim() || null,
+                        data.notes || null,
                         isActive,
                     );
 
@@ -2139,12 +1913,10 @@ app.patch(
     '/children/:id',
     authenticate,
     requireRole('admin', 'manager', 'parent'),
+    validate({ params: idParams('дитини'), body: updateChildBody }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID дитини' });
-        }
+        const { id } = req.valid.params;
+        const data = req.valid.body;
 
         const child = db.prepare('SELECT * FROM children WHERE id = ?').get(id);
         const isParent = req.user.role === 'parent';
@@ -2154,23 +1926,11 @@ app.patch(
             return res.status(404).json({ error: 'Дитину не знайдено' });
         }
 
-        const data = req.body;
-
-        if (!isPlainObject(data) || Object.keys(data).length === 0) {
-            return res.status(400).json({ error: 'Немає даних для оновлення' });
-        }
-
         // Батько може змінювати лише notes своєї дитини
         if (isParent && Object.keys(data).some((field) => field !== 'notes')) {
             return res.status(403).json({
                 error: 'Батьки можуть змінювати лише поле notes',
             });
-        }
-
-        const error = validateChild(data, true);
-
-        if (error) {
-            return res.status(400).json({ error });
         }
 
         const newIsActive =
@@ -2222,14 +1982,14 @@ app.patch(
         `,
             ).run(
                 data.fullName !== undefined
-                    ? data.fullName.trim()
+                    ? data.fullName
                     : child.fullName,
                 newBirthDate,
                 newGroupId,
                 data.discountPercent ?? child.discountPercent,
                 data.paymentPlan ?? child.paymentPlan,
                 data.notes !== undefined
-                    ? data.notes?.trim() || null
+                    ? data.notes || null
                     : child.notes,
                 newIsActive,
                 id,
@@ -2252,12 +2012,10 @@ app.put(
     '/children/:id/parents',
     authenticate,
     requireRole('admin', 'manager'),
+    validate({ params: idParams('дитини'), body: childParentsBody }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID дитини' });
-        }
+        const { id } = req.valid.params;
+        const data = req.valid.body;
 
         const child = db
             .prepare('SELECT id FROM children WHERE id = ?')
@@ -2267,13 +2025,7 @@ app.put(
             return res.status(404).json({ error: 'Дитину не знайдено' });
         }
 
-        const data = req.body;
-
-        if (!isPlainObject(data)) {
-            return res.status(400).json({ error: 'Некоректне тіло запиту' });
-        }
-
-        const parentsError = validateParentLinks(
+        const parentsError = checkParentsExist(
             data.parentId,
             data.guardianIds,
         );
@@ -2323,12 +2075,9 @@ app.delete(
     '/children/:id',
     authenticate,
     requireRole('admin'),
+    validate({ params: idParams('дитини') }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID дитини' });
-        }
+        const { id } = req.valid.params;
 
         const child = db
             .prepare('SELECT id FROM children WHERE id = ?')
@@ -2370,14 +2119,27 @@ app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
     }
 });
 
-app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
+const ROOM_ERROR = 'Некоректні дані кімнати';
 
-    if (id === null) {
-        return res.status(400).json({
-            error: 'Некоректний ID кімнати'
-        });
-    }
+const roomFields = {
+    name: requiredText(ROOM_ERROR),
+    type: z.enum(['base', 'specialized'], ROOM_ERROR),
+    rent: z.number(ROOM_ERROR).int(ROOM_ERROR).min(0, ROOM_ERROR)
+};
+
+// Створення: оренда за замовчуванням з CONFIG, зайві поля ігноруються
+const createRoomBody = z.object({
+    ...roomFields,
+    rent: roomFields.rent.default(CONFIG.ROOM_RENT)
+}, ROOM_ERROR);
+
+const updateRoomBody = patchBody(roomFields, {
+    invalidBody: ROOM_ERROR,
+    unknownField: () => ROOM_ERROR
+});
+
+app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати') }), (req, res) => {
+    const { id } = req.valid.params;
 
     try {
         const room = db.prepare(`
@@ -2402,29 +2164,14 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) 
 });
 
 
-app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const { name, type, rent = 50000 } = req.body || {};
-
-    if (
-        typeof name !== 'string' ||
-        !name.trim() ||
-        typeof type !== 'string' ||
-        !['base', 'specialized'].includes(type) ||
-        !Number.isSafeInteger(rent) ||
-        rent < 0
-    ) {
-        return res.status(400).json({
-            error: 'Некоректні дані кімнати'
-        });
-    }
-
-    const normalizedName = name.trim();
+app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ body: createRoomBody }), (req, res) => {
+    const { name, type, rent } = req.valid.body;
 
     try {
         const result = db.prepare(`
             INSERT INTO rooms (name, type, rent)
             VALUES (?, ?, ?)
-        `).run(normalizedName, type, rent);
+        `).run(name, type, rent);
 
         const room = db.prepare(`
             SELECT id, name, type, rent
@@ -2449,28 +2196,9 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => 
 });
 
 
-app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID кімнати' });
-    }
-
-    const body = req.body;
-
-    if (!isPlainObject(body)) {
-        return res.status(400).json({ error: 'Некоректні дані кімнати' });
-    }
-
-    const allowedFields = ['name', 'type', 'rent'];
-    const fields = Object.keys(body);
-
-    if (
-        fields.length === 0 ||
-        fields.some(field => !allowedFields.includes(field))
-    ) {
-        return res.status(400).json({ error: 'Некоректні дані кімнати' });
-    }
+app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати'), body: updateRoomBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const body = req.valid.body;
 
     try {
         const existing = db.prepare(`
@@ -2483,28 +2211,9 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
             return res.status(404).json({ error: 'Кімнату не знайдено' });
         }
 
-        const name = Object.hasOwn(body, 'name')
-            ? body.name
-            : existing.name;
-
-        const type = Object.hasOwn(body, 'type')
-            ? body.type
-            : existing.type;
-
-        const rent = Object.hasOwn(body, 'rent')
-            ? body.rent
-            : existing.rent;
-
-        if (
-            typeof name !== 'string' ||
-            !name.trim() ||
-            typeof type !== 'string' ||
-            !['base', 'specialized'].includes(type) ||
-            !Number.isSafeInteger(rent) ||
-            rent < 0
-        ) {
-            return res.status(400).json({ error: 'Некоректні дані кімнати' });
-        }
+        const name = body.name ?? existing.name;
+        const type = body.type ?? existing.type;
+        const rent = body.rent ?? existing.rent;
 
         // Не дозволяємо змінювати базову кімнату групи
         // на спеціалізовану.
@@ -2538,7 +2247,7 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
             UPDATE rooms
             SET name = ?, type = ?, rent = ?
             WHERE id = ?
-        `).run(name.trim(), type, rent, id);
+        `).run(name, type, rent, id);
 
         const updated = db.prepare(`
             SELECT id, name, type, rent
@@ -2563,12 +2272,8 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
 });
 
 
-app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID кімнати' });
-    }
+app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: idParams('кімнати') }), (req, res) => {
+    const { id } = req.valid.params;
 
     try {
         const room = db.prepare(`
@@ -2638,14 +2343,24 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
     }
 });
 
-app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
+const ACTIVITY_ERROR = 'Некоректні дані дисципліни';
 
-    if (id === null) {
-        return res.status(400).json({
-            error: 'Некоректний ID дисципліни'
-        });
-    }
+const activityFields = {
+    name: requiredText(ACTIVITY_ERROR),
+    teacherId: idField(ACTIVITY_ERROR).nullish(),
+    roomId: idField(ACTIVITY_ERROR).nullish()
+};
+
+const activityBodyOptions = {
+    invalidBody: ACTIVITY_ERROR,
+    unknownField: () => ACTIVITY_ERROR
+};
+
+const createActivityBody = strictBody(activityFields, activityBodyOptions);
+const updateActivityBody = patchBody(activityFields, activityBodyOptions);
+
+app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни') }), (req, res) => {
+    const { id } = req.valid.params;
 
     try {
         const activity = db.prepare(`
@@ -2671,29 +2386,8 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, 
     }
 });
 
-app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const body = req.body;
-
-    if (!isPlainObject(body)) {
-        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-    }
-
-    const allowedFields = ['name', 'teacherId', 'roomId'];
-
-    if (Object.keys(body).some(key => !allowedFields.includes(key))) {
-        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-    }
-
-    const { name, teacherId = null, roomId = null } = body;
-
-    if (
-        typeof name !== 'string' ||
-        !name.trim() ||
-        (teacherId !== null && !isPositiveInt(teacherId)) ||
-        (roomId !== null && !isPositiveInt(roomId))
-    ) {
-        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-    }
+app.post('/activities', authenticate, requireRole('admin', 'manager'), validate({ body: createActivityBody }), (req, res) => {
+    const { name, teacherId = null, roomId = null } = req.valid.body;
 
     try {
         if (teacherId !== null) {
@@ -2739,7 +2433,7 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
         const result = db.prepare(`
             INSERT INTO activities (name, teacherId, roomId)
             VALUES (?, ?, ?)
-        `).run(name.trim(), teacherId, roomId);
+        `).run(name, teacherId, roomId);
 
         const activity = db.prepare(`
             SELECT id, name, teacherId, roomId
@@ -2770,25 +2464,9 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
     }
 });
 
-app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID дисципліни' });
-    }
-
-    const body = req.body;
-
-    if (!isPlainObject(body)) {
-        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-    }
-
-    const allowedFields = ['name', 'teacherId', 'roomId'];
-    const fields = Object.keys(body);
-
-    if (fields.length === 0 || fields.some(field => !allowedFields.includes(field))) {
-        return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-    }
+app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни'), body: updateActivityBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const body = req.valid.body;
 
     try {
         const existing = db.prepare(`
@@ -2808,15 +2486,6 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
         const roomId = Object.hasOwn(body, 'roomId')
             ? body.roomId
             : existing.roomId;
-
-        if (
-            typeof name !== 'string' ||
-            !name.trim() ||
-            (teacherId !== null && !isPositiveInt(teacherId)) ||
-            (roomId !== null && !isPositiveInt(roomId))
-        ) {
-            return res.status(400).json({ error: 'Некоректні дані дисципліни' });
-        }
 
         if (teacherId !== null) {
             const teacher = db.prepare(`
@@ -2858,7 +2527,7 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
             UPDATE activities
             SET name = ?, teacherId = ?, roomId = ?
             WHERE id = ?
-        `).run(name.trim(), teacherId, roomId, id);
+        `).run(name, teacherId, roomId, id);
 
         const updated = db.prepare(`
             SELECT id, name, teacherId, roomId
@@ -2886,12 +2555,8 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
     }
 });
 
-app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID дисципліни' });
-    }
+app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ params: idParams('дисципліни') }), (req, res) => {
+    const { id } = req.valid.params;
 
     try {
         const activity = db.prepare(`
@@ -3072,12 +2737,9 @@ app.get(
     '/children/:id/invoice',
     authenticate,
     requireRole('admin', 'manager', 'parent'),
+    validate({ params: idParams('дитини') }),
     (req, res) => {
-        const id = parseId(req.params.id);
-
-        if (id === null) {
-            return res.status(400).json({ error: 'Некоректний ID дитини' });
-        }
+        const { id } = req.valid.params;
 
         const child = db.prepare('SELECT * FROM children WHERE id = ?').get(id);
 
@@ -3204,12 +2866,8 @@ app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (
 });
 
 // 2. Отримати розклад для групи (ТЗ: батьки - своя дитина (і за children.parentId, і за child_parents), вчителі - свої групи, admin/manager - всі)
-app.get('/groups/:id/schedule', authenticate, (req, res) => {
-    const groupId = parseId(req.params.id);
-
-    if (groupId === null) {
-        return res.status(400).json({ error: 'Некоректний ID групи' });
-    }
+app.get('/groups/:id/schedule', authenticate, validate({ params: idParams('групи') }), (req, res) => {
+    const { id: groupId } = req.valid.params;
 
     const groupExists = db.prepare('SELECT 1 FROM groups WHERE id = ?').get(groupId);
     if (!groupExists) {
@@ -3254,12 +2912,8 @@ app.get('/groups/:id/schedule', authenticate, (req, res) => {
 });
 
 // 3. Отримати розклад для викладача (ТЗ: тільки свій розклад, admin/manager - всі)
-app.get('/teachers/:id/schedule', authenticate, (req, res) => {
-    const teacherId = parseId(req.params.id);
-
-    if (teacherId === null) {
-        return res.status(400).json({ error: 'Некоректний ID викладача' });
-    }
+app.get('/teachers/:id/schedule', authenticate, validate({ params: idParams('викладача') }), (req, res) => {
+    const { id: teacherId } = req.valid.params;
 
     const teacherExists = db.prepare('SELECT 1 FROM employees WHERE id = ?').get(teacherId);
     if (!teacherExists) {
@@ -3290,31 +2944,33 @@ app.get('/teachers/:id/schedule', authenticate, (req, res) => {
     res.status(200).json(schedule);
 });
 
+// Тіло PATCH /schedules/:id: обидва поля обов'язкові, час на сітці 09:30-12:00, день 0-4 (лише цілі)
+const SLOT_FIELDS_MISSING = 'Відсутні обов\'язкові поля: startTime, dayOfWeek';
+const SLOT_FIELDS_INVALID = 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).';
+const slotFieldError = (issue) => (issue.input === undefined ? SLOT_FIELDS_MISSING : SLOT_FIELDS_INVALID);
+
+const moveSlotBody = z.object({
+    startTime: z.enum(['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'], { error: slotFieldError }),
+    dayOfWeek: z.number({ error: slotFieldError }).int({ error: slotFieldError })
+        .min(0, { error: slotFieldError }).max(4, { error: slotFieldError })
+}, SLOT_FIELDS_MISSING);
+
 // 4. Оновити слот розкладу (перенести урок)
-app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), (req, res) => {
+app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), validate({ params: idParams('розкладу') }), (req, res) => {
     try {
-        const slotId = parseId(req.params.id);
+        const { id: slotId } = req.valid.params;
 
-        if (slotId === null) {
-            return res.status(400).json({ error: 'Некоректний ID розкладу' });
-        }
-
-        // За ТЗ: спочатку перевіряємо існування (404)
+        // За ТЗ: спочатку перевіряємо існування (404), тому тіло перевіряємо
+        // схемою тут, після пошуку слоту, а не в middleware validate()
         const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
         if (!currentSlot) return res.status(404).json({ error: 'Слот не знайдено' });
 
-        // Валідація на порожнє тіло та наявність полів
-        if (!req.body || req.body.startTime === undefined || req.body.dayOfWeek === undefined) {
-            return res.status(400).json({ error: 'Відсутні обов\'язкові поля: startTime, dayOfWeek' });
+        const parsedBody = moveSlotBody.safeParse(req.body);
+        if (!parsedBody.success) {
+            return res.status(400).json({ error: firstIssueMessage(parsedBody.error) });
         }
 
-        const { startTime, dayOfWeek } = req.body;
-
-        // Сувора валідація типу і значень
-        const validTimes = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
-        if (!validTimes.includes(startTime) || !Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 4) {
-            return res.status(400).json({ error: 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).' });
-        }
+        const { startTime, dayOfWeek } = parsedBody.data;
 
         // Перевірка: вчитель може міняти тільки свої заняття (403)
         if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
@@ -3418,12 +3074,8 @@ function calcKindergartenProfit() {
 // --- ЕНДПОІНТИ ПРИБУТКУ ---
 
 // 5. Отримати прибуток для конкретної групи
-app.get('/groups/:id/profit', authenticate, requireRole('admin'), (req, res) => {
-    const id = parseId(req.params.id);
-
-    if (id === null) {
-        return res.status(400).json({ error: 'Некоректний ID групи' });
-    }
+app.get('/groups/:id/profit', authenticate, requireRole('admin'), validate({ params: idParams('групи') }), (req, res) => {
+    const { id } = req.valid.params;
 
     try {
         const profitData = calcGroupProfit(id);
@@ -3506,50 +3158,31 @@ function calcForecast({ children, age, groupSize, discountPercent, paymentPlan, 
 }
 
 // GET /admin/forecast?children=150&age=5&groupSize=20&discountPercent=0&paymentPlan=monthly
-app.get('/admin/forecast', authenticate, requireRole('admin'), (req, res) => {
-    const readInt = (value, fallback, min, max) => {
-        if (value === undefined) {
-            return fallback;
-        }
+// Query прогнозу: цілі числа з діапазонами, необов'язкові параметри мають значення за замовчуванням
+const forecastInt = (min, max, message) =>
+    z.string(message)
+        .regex(/^\d+$/, message)
+        .transform(Number)
+        .refine((value) => value >= min && value <= max, message);
 
-        if (typeof value !== 'string' || !/^\d+$/.test(value)) {
-            return null;
-        }
+const DISCOUNT_ERROR = 'Параметр discountPercent має бути 0, 10, 20 або 30';
 
-        const number = Number(value);
+const forecastQuery = z.object({
+    children: forecastInt(1, FORECAST_MAX_CHILDREN,
+        `Параметр children обов'язковий: ціле число від 1 до ${FORECAST_MAX_CHILDREN}`),
+    age: forecastInt(2, 5, 'Параметр age має бути цілим числом від 2 до 5').default(5),
+    groupSize: forecastInt(1, CONFIG.GROUP_MAX_CHILDREN,
+        `Параметр groupSize має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`)
+        .default(CONFIG.GROUP_MAX_CHILDREN),
+    discountPercent: forecastInt(0, 30, DISCOUNT_ERROR)
+        .refine((value) => CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(value), DISCOUNT_ERROR)
+        .default(0),
+    paymentPlan: z.enum(['monthly', 'yearly'], 'Параметр paymentPlan має бути monthly або yearly')
+        .default('monthly')
+});
 
-        return number >= min && number <= max ? number : null;
-    };
-
-    const children = readInt(req.query.children, null, 1, FORECAST_MAX_CHILDREN);
-    const age = readInt(req.query.age, 5, 2, 5);
-    const groupSize = readInt(req.query.groupSize, CONFIG.GROUP_MAX_CHILDREN, 1, CONFIG.GROUP_MAX_CHILDREN);
-    const discountPercent = readInt(req.query.discountPercent, 0, 0, 30);
-    const paymentPlan = req.query.paymentPlan === undefined ? 'monthly' : req.query.paymentPlan;
-
-    if (children === null) {
-        return res.status(400).json({
-            error: `Параметр children обов'язковий: ціле число від 1 до ${FORECAST_MAX_CHILDREN}`
-        });
-    }
-
-    if (age === null) {
-        return res.status(400).json({ error: 'Параметр age має бути цілим числом від 2 до 5' });
-    }
-
-    if (groupSize === null) {
-        return res.status(400).json({
-            error: `Параметр groupSize має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`
-        });
-    }
-
-    if (discountPercent === null || !CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(discountPercent)) {
-        return res.status(400).json({ error: 'Параметр discountPercent має бути 0, 10, 20 або 30' });
-    }
-
-    if (paymentPlan !== 'monthly' && paymentPlan !== 'yearly') {
-        return res.status(400).json({ error: 'Параметр paymentPlan має бути monthly або yearly' });
-    }
+app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query: forecastQuery }), (req, res) => {
+    const { children, age, groupSize, discountPercent, paymentPlan } = req.valid.query;
 
     const disciplines = db.prepare('SELECT COUNT(*) AS count FROM activities').get().count || 5;
     const options = { children, age, groupSize, discountPercent, paymentPlan, disciplines };
