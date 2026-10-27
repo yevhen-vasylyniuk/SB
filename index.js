@@ -314,7 +314,9 @@ function seedDatabase() {
 seedDatabase();
 
 
-// ---------- Спільна валідація (Zod) ----------
+// ==========================================
+// 2. СПІЛЬНА ВАЛІДАЦІЯ (Zod)
+// ==========================================
 // Вхідні дані (params, query, body) перевіряються схемами Zod у middleware
 // validate() до виконання маршруту. Схеми сутностей лежать у своїх блоках,
 // тут лише спільні будівельні елементи. Помилка: 400 { error: "<повідомлення схеми>" }.
@@ -395,7 +397,7 @@ function validate(schemas) {
 
 
 // ==========================================
-// 2. АВТОРИЗАЦІЯ
+// 3. АВТОРИЗАЦІЯ ТА МІДЛВАРИ
 // ==========================================
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -411,41 +413,6 @@ const loginBody = z.object({
     password: z.string(LOGIN_REQUIRED).min(1, LOGIN_REQUIRED)
 }, LOGIN_REQUIRED);
 
-app.post('/auth/login', validate({ body: loginBody }), (req, res) => {
-    const { login, password } = req.valid.body;
-
-    const user = db.prepare(`
-        SELECT id, login, passwordHash, role
-        FROM users
-        WHERE login = ?
-    `).get(login.trim());
-
-    if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
-        return res.status(401).json({
-            error: 'Невірний логін або пароль'
-        });
-    }
-
-    const token = jwt.sign(
-        {
-            userId: user.id,
-            role: user.role
-        },
-        JWT_SECRET,
-        { expiresIn: '8h' }
-    );
-
-    return res.status(200).json({
-        token,
-        tokenType: 'Bearer',
-        expiresIn: 28800,
-        user: {
-            id: user.id,
-            login: user.login,
-            role: user.role
-        }
-    });
-});
 
 function authenticate(req, res, next) {
     const authHeader = req.headers.authorization;
@@ -561,133 +528,10 @@ const createUserBody = z.discriminatedUnion('role', [
         : 'Недопустима роль користувача'
 });
 
-app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ body: createUserBody }), (req, res) => {
-    const { login, password, role } = req.valid.body;
-    const normalizedParentId = req.valid.body.parentId ?? null;
-    const normalizedEmployeeId = req.valid.body.employeeId ?? null;
-
-    // Менеджер може створювати тільки батьків
-    if (req.user.role === 'manager' && role !== 'parent') {
-        return res.status(403).json({
-            error: 'Менеджер може створювати лише користувачів із роллю parent'
-        });
-    }
-
-    // Перевірка зв'язків у базі даних (форму зв'язків уже перевірила схема)
-    if (role === 'parent') {
-        const parent = db.prepare(
-            'SELECT id FROM parents WHERE id = ?'
-        ).get(normalizedParentId);
-
-        if (!parent) {
-            return res.status(404).json({
-                error: 'Батька не знайдено'
-            });
-        }
-    } else if (role === 'teacher') {
-        const employee = db.prepare(
-            'SELECT id, position FROM employees WHERE id = ?'
-        ).get(normalizedEmployeeId);
-
-        if (!employee) {
-            return res.status(404).json({
-                error: 'Працівника не знайдено'
-            });
-        }
-
-        if (employee.position !== 'teacher') {
-            return res.status(400).json({
-                error: 'Працівник повинен мати посаду teacher'
-            });
-        }
-    }
-
-    // Перевірка унікальності логіна
-    const existingUser = db.prepare(
-        'SELECT id FROM users WHERE login = ?'
-    ).get(login);
-
-    if (existingUser) {
-        return res.status(409).json({
-            error: 'Користувач із таким логіном уже існує'
-        });
-    }
-
-    const passwordHash = bcrypt.hashSync(password, 12);
-
-    try {
-        const result = db.prepare(`
-            INSERT INTO users (login, passwordHash, role, parentId, employeeId)
-            VALUES (?, ?, ?, ?, ?)
-        `).run(
-            login,
-            passwordHash,
-            role,
-            normalizedParentId,
-            normalizedEmployeeId
-        );
-
-        return res.status(201).json({
-            id: Number(result.lastInsertRowid),
-            login,
-            role,
-            parentId: normalizedParentId,
-            employeeId: normalizedEmployeeId
-        });
-    } catch (error) {
-        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-            return res.status(409).json({
-                error: 'Користувач із таким логіном уже існує'
-            });
-        }
-
-        console.error('User creation failed:', error);
-
-        return res.status(500).json({
-            error: 'Не вдалося створити користувача'
-        });
-    }
-});
-
-// GET /users - список акаунтів (лише admin); passwordHash ніколи не повертається
-app.get('/users', authenticate, requireRole('admin'), (req, res) => {
-    const users = db.prepare(`
-        SELECT id, login, role, parentId, employeeId
-        FROM users
-        ORDER BY id
-    `).all();
-
-    return res.status(200).json(users);
-});
-
-// DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
-// адміністратор не може видалити сам себе
-app.delete('/users/:id', authenticate, requireRole('admin'), validate({ params: idParams('користувача') }), (req, res) => {
-    const { id } = req.valid.params;
-
-    if (id === req.user.id) {
-        return res.status(409).json({
-            error: 'Не можна видалити власний акаунт'
-        });
-    }
-
-    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-
-    if (!user) {
-        return res.status(404).json({
-            error: 'Користувача не знайдено'
-        });
-    }
-
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-
-    return res.status(204).send();
-});
 
 // ==========================================
-// 3. БАТЬКИ ТА ПРАЦІВНИКИ
+// 4. БАТЬКИ ТА ПРАЦІВНИКИ
 // ==========================================
-
 
 
 const parentFields = {
@@ -699,141 +543,6 @@ const parentFields = {
 
 const createParentBody = strictBody(parentFields);
 const updateParentBody = patchBody(parentFields);
-
-
-// GET /parents - отримати всіх батьків
-app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const parents = db.prepare(
-        'SELECT * FROM parents'
-    ).all();
-
-    res.status(200).json(parents);
-});
-
-// GET /parents/:id - отримати батька за ID
-app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька') }), (req, res) => {
-    const { id } = req.valid.params;
-
-    const parent = db.prepare(
-        'SELECT * FROM parents WHERE id = ?'
-    ).get(id);
-
-    if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
-    }
-
-    res.status(200).json(parent);
-});
-
-// POST /parents - створити батька
-app.post('/parents', authenticate, requireRole('admin', 'manager'), validate({ body: createParentBody }), (req, res) => {
-    const { fullName, phone, email, relationNote } = req.valid.body;
-
-    const result = db.prepare(`
-        INSERT INTO parents (fullName, phone, email, relationNote)
-        VALUES (?, ?, ?, ?)
-    `).run(
-        fullName,
-        phone || null,
-        email || null,
-        relationNote || null
-    );
-
-    const parent = db.prepare(
-        'SELECT * FROM parents WHERE id = ?'
-    ).get(result.lastInsertRowid);
-
-    res.status(201).json(parent);
-});
-
-// PATCH /parents/:id - оновити батька
-app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька'), body: updateParentBody }), (req, res) => {
-    const { id } = req.valid.params;
-    const data = req.valid.body;
-
-    const parent = db.prepare(
-        'SELECT * FROM parents WHERE id = ?'
-    ).get(id);
-
-    if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
-    }
-
-    const fullName = data.fullName !== undefined
-        ? data.fullName
-        : parent.fullName;
-
-    const phone = data.phone !== undefined
-        ? data.phone || null
-        : parent.phone;
-
-    const email = data.email !== undefined
-        ? data.email || null
-        : parent.email;
-
-    const relationNote = data.relationNote !== undefined
-        ? data.relationNote || null
-        : parent.relationNote;
-
-    db.prepare(`
-        UPDATE parents
-        SET fullName = ?, phone = ?, email = ?, relationNote = ?
-        WHERE id = ?
-    `).run(fullName, phone, email, relationNote, id);
-
-    const updatedParent = db.prepare(
-        'SELECT * FROM parents WHERE id = ?'
-    ).get(id);
-
-    res.status(200).json(updatedParent);
-});
-
-// DELETE /parents/:id - видалити батька
-app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params: idParams('батька') }), (req, res) => {
-    const { id } = req.valid.params;
-
-    const parent = db.prepare(
-        'SELECT * FROM parents WHERE id = ?'
-    ).get(id);
-
-    if (!parent) {
-        return res.status(404).json({ error: 'Батька не знайдено' });
-    }
-
-    const hasChildren = db.prepare(
-        'SELECT id FROM children WHERE parentId = ? LIMIT 1'
-    ).get(id);
-
-    const hasAccount = db.prepare(
-        'SELECT id FROM users WHERE parentId = ? LIMIT 1'
-    ).get(id);
-
-    if (hasChildren || hasAccount) {
-        return res.status(409).json({
-            error: 'Неможливо видалити батька, оскільки існують пов’язані записи'
-        });
-    }
-
-
-
-    try {
-        db.prepare(
-            'DELETE FROM parents WHERE id = ?'
-        ).run(id);
-    } catch (error) {
-        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
-                error: 'Батько має пов’язані записи'
-            });
-        }
-
-        throw error;
-    }
-
-    res.status(204).send();
-
-
-});
 
 
 const SALARY_RATE_ERROR = 'Зарплата повинна бути невід’ємним цілим числом';
@@ -899,162 +608,8 @@ function validateEmployeeRelations(id, position) {
 }
 
 
-// GET /employees - отримати всіх працівників
-app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const employees = db.prepare(
-        'SELECT * FROM employees'
-    ).all();
-
-    res.status(200).json(employees);
-});
-
-// GET /employees/:id - отримати працівника за ID
-app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника') }), (req, res) => {
-    const { id } = req.valid.params;
-
-    const employee = db.prepare(
-        'SELECT * FROM employees WHERE id = ?'
-    ).get(id);
-
-    if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
-    }
-
-    res.status(200).json(employee);
-});
-
-// POST /employees - створити працівника
-app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({ body: createEmployeeBody }), (req, res) => {
-    const { fullName, position, salaryRate } = req.valid.body;
-
-    const relationError = validateEmployeeRelations(null, position);
-
-    if (relationError) {
-        return res.status(409).json({ error: relationError });
-    }
-
-    const result = db.prepare(`
-        INSERT INTO employees (fullName, position, salaryRate)
-        VALUES (?, ?, ?)
-    `).run(
-        fullName,
-        position,
-        salaryRate ?? null
-    );
-
-    const employee = db.prepare(
-        'SELECT * FROM employees WHERE id = ?'
-    ).get(result.lastInsertRowid);
-
-    res.status(201).json(employee);
-});
-
-// PATCH /employees/:id - оновити працівника
-app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника'), body: updateEmployeeBody }), (req, res) => {
-    const { id } = req.valid.params;
-    const data = req.valid.body;
-
-    const employee = db.prepare(
-        'SELECT * FROM employees WHERE id = ?'
-    ).get(id);
-
-    if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
-    }
-
-    const fullName = data.fullName !== undefined
-        ? data.fullName
-        : employee.fullName;
-
-    const position = data.position !== undefined
-        ? data.position
-        : employee.position;
-
-    const salaryRate = data.salaryRate !== undefined
-        ? data.salaryRate
-        : employee.salaryRate;
-
-
-    const relationError = validateEmployeeRelations(id, position);
-
-    if (relationError) {
-        return res.status(409).json({ error: relationError });
-    }
-
-
-    db.prepare(`
-        UPDATE employees
-        SET fullName = ?, position = ?, salaryRate = ?
-        WHERE id = ?
-    `).run(fullName, position, salaryRate, id);
-
-    const updatedEmployee = db.prepare(
-        'SELECT * FROM employees WHERE id = ?'
-    ).get(id);
-
-    res.status(200).json(updatedEmployee);
-});
-
-// DELETE /employees/:id - видалити працівника
-app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ params: idParams('працівника') }), (req, res) => {
-    const { id } = req.valid.params;
-
-    const employee = db.prepare(
-        'SELECT * FROM employees WHERE id = ?'
-    ).get(id);
-
-    if (!employee) {
-        return res.status(404).json({ error: 'Працівника не знайдено' });
-    }
-
-    const inGroups = db.prepare(`
-        SELECT id FROM groups
-        WHERE educatorId = ? OR assistantId = ?
-        LIMIT 1
-    `).get(id, id);
-
-    const inActivities = db.prepare(
-        'SELECT id FROM activities WHERE teacherId = ? LIMIT 1'
-    ).get(id);
-
-    const inSchedules = db.prepare(
-        'SELECT id FROM schedule_slots WHERE teacherId = ? LIMIT 1'
-    ).get(id);
-
-    const hasAccount = db.prepare(
-        'SELECT id FROM users WHERE employeeId = ? LIMIT 1'
-    ).get(id);
-
-    if (inGroups || inActivities || inSchedules || hasAccount) {
-        return res.status(409).json({
-            error: 'Неможливо видалити працівника, оскільки існують пов’язані записи'
-        });
-    }
-
-
-    try {
-        db.prepare(
-            'DELETE FROM employees WHERE id = ?'
-        ).run(id);
-    } catch (error) {
-        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            return res.status(409).json({
-                error: 'Працівник має пов’язані записи'
-            });
-        }
-
-        throw error;
-    }
-
-    res.status(204).send();
-
-});
-
-
-
-
 // ==========================================
-// 4. ДІТИ ТА ГРУПИ
+// 5. ДІТИ ТА ГРУПИ
 // ==========================================
 const ENFORCE_AGE_MATCH = true;
 const MAX_GROUPS = 30; // максимум груп у садку
@@ -1354,7 +909,987 @@ function checkGroupRelations(group, groupId) {
     return null;
 }
 
-// ---------- Групи: маршрути ----------
+
+// ---------- Діти: валідація ----------
+
+const BIRTH_DATE_FORMAT_ERROR = 'Дата народження має бути у форматі YYYY-MM-DD';
+
+const childFields = {
+    fullName: requiredText('Вкажіть коректне ПІБ дитини'),
+    birthDate: z.string(BIRTH_DATE_FORMAT_ERROR).superRefine((value, ctx) => {
+        if (!isValidDateString(value)) {
+            return ctx.addIssue({ code: 'custom', message: BIRTH_DATE_FORMAT_ERROR });
+        }
+
+        if (value > new Date().toISOString().slice(0, 10)) {
+            return ctx.addIssue({
+                code: 'custom',
+                message: 'Дата народження не може бути в майбутньому',
+            });
+        }
+
+        const age = calcAge(value);
+
+        if (age < MIN_CHILD_AGE || age > MAX_CHILD_AGE) {
+            ctx.addIssue({
+                code: 'custom',
+                message: `Вік дитини має бути від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE} років (зараз ${age})`,
+            });
+        }
+    }),
+    groupId: idField('Некоректний groupId').nullish(),
+    discountPercent: z.literal(CONFIG.ALLOWED_DISCOUNT_PERCENTS, 'Знижка має бути 0, 10, 20 або 30').optional(),
+    paymentPlan: z.enum(['monthly', 'yearly'], 'paymentPlan має бути monthly або yearly').optional(),
+    notes: optionalText('Некоректне поле: notes'),
+    isActive: z.literal([true, false, 0, 1], 'isActive має бути true або false').optional(),
+};
+
+// Основний представник (платник) і необов’язкові додаткові опікуни
+const PARENT_ID_ERROR = 'parentId обов’язковий і має бути додатним цілим числом';
+const GUARDIANS_LIST_ERROR = `guardianIds має бути масивом (до ${MAX_GUARDIANS} елементів)`;
+const GUARDIANS_UNIQUE_ERROR = 'guardianIds мають бути унікальними додатними цілими числами і не містити parentId';
+
+const parentLinkFields = {
+    parentId: idField(PARENT_ID_ERROR),
+    guardianIds: z.array(idField(GUARDIANS_UNIQUE_ERROR), GUARDIANS_LIST_ERROR)
+        .max(MAX_GUARDIANS, GUARDIANS_LIST_ERROR).nullish(),
+};
+
+const parentsAreUnique = ({ parentId, guardianIds }) => {
+    const all = [parentId, ...(guardianIds ?? [])];
+
+    return new Set(all).size === all.length;
+};
+
+const uniqueParentsRule = { path: ['guardianIds'], error: GUARDIANS_UNIQUE_ERROR };
+
+const createChildBody = strictBody({ ...childFields, ...parentLinkFields })
+    .refine(parentsAreUnique, uniqueParentsRule);
+
+// Представників у PATCH змінювати не можна: для цього є PUT /children/:id/parents
+const updateChildBody = patchBody(childFields, {
+    unknownField: (key) => (key === 'parentId' || key === 'guardianIds'
+        ? 'Представників змінюйте через PUT /children/:id/parents'
+        : `Невідоме поле: ${key}`),
+});
+
+// Тіло PUT /children/:id/parents (зайві поля, як і раніше, ігноруються)
+const childParentsBody = z.object(parentLinkFields, 'Некоректне тіло запиту')
+    .refine(parentsAreUnique, uniqueParentsRule);
+
+// Query GET /children?groupId=&isActive=
+const childrenQuery = z.object({
+    groupId: idParam('Некоректний groupId').optional(),
+    isActive: z.enum(['0', '1', 'true', 'false'], 'Некоректний isActive')
+        .transform((value) => (value === '1' || value === 'true' ? 1 : 0))
+        .optional(),
+});
+
+// Усі представники мають існувати в базі даних (форму перевірила схема)
+function checkParentsExist(parentId, guardianIds) {
+    const all = [parentId, ...(guardianIds ?? [])];
+
+    const { cnt } = db
+        .prepare(
+            `SELECT COUNT(*) AS cnt FROM parents
+             WHERE id IN (${all.map(() => '?').join(',')})`,
+        )
+        .get(...all);
+
+    if (cnt !== all.length) {
+        return {
+            status: 400,
+            error: 'Одного або кількох представників не знайдено',
+        };
+    }
+
+    return null;
+}
+
+// Перевірка призначення до групи: існування, вік, місткість
+function checkGroupAssignment(
+    groupId,
+    birthDate,
+    childId,
+    { checkAge = true, checkCapacity = true } = {},
+) {
+    const group = db
+        .prepare('SELECT id, ageCategory, capacity FROM groups WHERE id = ?')
+        .get(groupId);
+
+    if (!group) {
+        return { status: 400, error: 'Групу не знайдено' };
+    }
+
+    if (checkAge && ENFORCE_AGE_MATCH) {
+        const age = calcAge(birthDate);
+
+        if (age !== group.ageCategory) {
+            return {
+                status: 409,
+                error: `Вік дитини (${age}) не відповідає віковій категорії групи (${group.ageCategory})`,
+            };
+        }
+    }
+
+    if (checkCapacity) {
+        const { cnt } = db
+            .prepare(
+                `SELECT COUNT(*) AS cnt FROM children
+                 WHERE groupId = ? AND isActive = 1 AND id <> ?`,
+            )
+            .get(groupId, childId ?? 0);
+
+        if (cnt >= group.capacity) {
+            return { status: 409, error: 'Група заповнена' };
+        }
+    }
+
+    return null;
+}
+
+
+// ==========================================
+// 6. КІМНАТИ ТА ЗАНЯТТЯ
+// ==========================================
+
+
+const ROOM_ERROR = 'Некоректні дані кімнати';
+
+const roomFields = {
+    name: requiredText(ROOM_ERROR),
+    type: z.enum(['base', 'specialized'], ROOM_ERROR),
+    rent: z.number(ROOM_ERROR).int(ROOM_ERROR).min(0, ROOM_ERROR)
+};
+
+// Створення: оренда за замовчуванням з CONFIG, зайві поля ігноруються
+const createRoomBody = z.object({
+    ...roomFields,
+    rent: roomFields.rent.default(CONFIG.ROOM_RENT)
+}, ROOM_ERROR);
+
+const updateRoomBody = patchBody(roomFields, {
+    invalidBody: ROOM_ERROR,
+    unknownField: () => ROOM_ERROR
+});
+
+
+const ACTIVITY_ERROR = 'Некоректні дані дисципліни';
+
+const activityFields = {
+    name: requiredText(ACTIVITY_ERROR),
+    teacherId: idField(ACTIVITY_ERROR).nullish(),
+    roomId: idField(ACTIVITY_ERROR).nullish()
+};
+
+const activityBodyOptions = {
+    invalidBody: ACTIVITY_ERROR,
+    unknownField: () => ACTIVITY_ERROR
+};
+
+const createActivityBody = strictBody(activityFields, activityBodyOptions);
+const updateActivityBody = patchBody(activityFields, activityBodyOptions);
+
+
+function findScheduleConflict(slot, ignoreId = null) {
+    const { groupId, teacherId, roomId, dayOfWeek, startTime } = slot;
+
+    const conflicts = [
+        { column: 'groupId', value: groupId, type: 'group_busy' },
+        { column: 'teacherId', value: teacherId, type: 'teacher_busy' },
+        { column: 'roomId', value: roomId, type: 'room_busy' }
+    ];
+
+    for (const conflict of conflicts) {
+        const existing = db.prepare(`
+            SELECT id
+            FROM schedule_slots
+            WHERE dayOfWeek = ?
+              AND startTime = ?
+              AND ${conflict.column} = ?
+              AND id IS NOT ?
+            ORDER BY id ASC
+            LIMIT 1
+        `).get(
+            dayOfWeek,
+            startTime,
+            conflict.value,
+            ignoreId
+        );
+
+        if (existing) {
+            return {
+                type: conflict.type,
+                slotId: existing.id
+            };
+        }
+    }
+
+    return null;
+}
+
+
+// ==========================================
+// 7. РАХУНКИ ТА ПЛАТЕЖІ
+// ==========================================
+
+// Чисті функції розрахунку: без доступу до БД, лише цілі гривні.
+// Контракт описаний у PROJECT_TASKS.md. Некоректний вхід дає RangeError,
+// тому маршрути мають перевіряти дані до виклику.
+
+// calcTuition({ discountPercent, paymentPlan }) -> { perMonth, perYear }
+// perMonth це місячний еквівалент (для плану yearly це 1/12 річної суми),
+// саме він іде в розрахунок прибутку.
+function calcTuition(child) {
+    if (!child || typeof child !== 'object') {
+        throw new RangeError('calcTuition: очікується об\'єкт дитини');
+    }
+
+    const { discountPercent, paymentPlan } = child;
+
+    if (!CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(discountPercent)) {
+        throw new RangeError('calcTuition: некоректна знижка');
+    }
+
+    if (paymentPlan !== 'monthly' && paymentPlan !== 'yearly') {
+        throw new RangeError('calcTuition: некоректний план оплати');
+    }
+
+    const yearBase = Math.round(
+        CONFIG.BASE_TUITION_MONTH * CONFIG.MONTHS_IN_YEAR *
+        (100 - discountPercent) / 100
+    );
+
+    const perYear = paymentPlan === 'yearly'
+        ? Math.round(yearBase * (100 - CONFIG.YEARLY_PLAN_DISCOUNT_PERCENT) / 100)
+        : yearBase;
+
+    return {
+        perMonth: Math.round(perYear / CONFIG.MONTHS_IN_YEAR),
+        perYear
+    };
+}
+
+// calcMeals(age) -> { perDay, perMonth, perYear }
+// age визначає викликач: group.ageCategory, а без групи повний вік за birthDate.
+// Пільги на харчування не діють, у прибуток садка воно не входить.
+function calcMeals(age) {
+    if (!Number.isInteger(age) || CONFIG.MEAL_PER_DAY[age] === undefined) {
+        throw new RangeError('calcMeals: вік має бути цілим числом від 2 до 5');
+    }
+
+    const perDay = CONFIG.MEAL_PER_DAY[age];
+    const perMonth = perDay * CONFIG.WORK_DAYS_PER_MONTH;
+
+    return {
+        perDay,
+        perMonth,
+        perYear: perMonth * CONFIG.MONTHS_IN_YEAR
+    };
+}
+
+function assertKidsCount(kidsCount, fnName) {
+    if (
+        !Number.isInteger(kidsCount) ||
+        kidsCount < 0 ||
+        kidsCount > CONFIG.GROUP_MAX_CHILDREN
+    ) {
+        throw new RangeError(
+            `${fnName}: кількість дітей має бути цілим числом від 0 до ${CONFIG.GROUP_MAX_CHILDREN}`
+        );
+    }
+}
+
+// calcEducatorSalary(kidsCount) -> зарплата вихователя за місяць
+// 2 000 за кожну з перших 12 дітей, 5 000 за кожну з 13-ї по 20-ту.
+function calcEducatorSalary(kidsCount) {
+    assertKidsCount(kidsCount, 'calcEducatorSalary');
+
+    const base = Math.min(kidsCount, CONFIG.SALARY_BASE_CHILDREN);
+    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
+
+    return base * CONFIG.EDUCATOR_RATE_BASE + over * CONFIG.EDUCATOR_RATE_OVER;
+}
+
+// calcAssistantSalary(kidsCount) -> зарплата помічника за місяць
+// 20 000 плюс 3 000 за кожну дитину з 13-ї по 20-ту.
+function calcAssistantSalary(kidsCount) {
+    assertKidsCount(kidsCount, 'calcAssistantSalary');
+
+    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
+
+    return CONFIG.ASSISTANT_BASE_SALARY + over * CONFIG.ASSISTANT_EXTRA_PER_CHILD;
+}
+
+
+// ==========================================
+// 8. РОЗКЛАД
+// ==========================================
+
+function generateScheduleLogic() {
+    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
+    const activities = db.prepare('SELECT * FROM activities ORDER BY id ASC LIMIT 5').all();
+
+    if (activities.length < 5) {
+        throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
+    }
+
+    for (const act of activities) {
+        if (!act.teacherId || !act.roomId) {
+            throw new Error(`Дисципліна "${act.name}" не має призначеного викладача або кімнати.`);
+        }
+    }
+
+    const insertSlot = db.prepare(`
+        INSERT INTO schedule_slots (groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const generate = db.transaction(() => {
+        db.prepare('DELETE FROM schedule_slots').run();
+        const numActivities = 5;
+
+        for (let d = 0; d < 5; d++) {
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i];
+                const activityIndex = (i + d) % numActivities;
+                const activity = activities[activityIndex];
+
+                const slotIndex = Math.floor(i / numActivities);
+                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30);
+
+                const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+                const mm = (totalMinutes % 60).toString().padStart(2, '0');
+                const startTime = `${hh}:${mm}`;
+
+                insertSlot.run(
+                    group.id, activity.id, activity.teacherId,
+                    activity.roomId, d, startTime, 30
+                );
+            }
+        }
+    });
+
+    generate();
+}
+
+
+// Тіло PATCH /schedules/:id: обидва поля обов'язкові, час на сітці 09:30-12:00, день 0-4 (лише цілі)
+const SLOT_FIELDS_MISSING = 'Відсутні обов\'язкові поля: startTime, dayOfWeek';
+const SLOT_FIELDS_INVALID = 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).';
+const slotFieldError = (issue) => (issue.input === undefined ? SLOT_FIELDS_MISSING : SLOT_FIELDS_INVALID);
+
+const moveSlotBody = z.object({
+    startTime: z.enum(['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'], { error: slotFieldError }),
+    dayOfWeek: z.number({ error: slotFieldError }).int({ error: slotFieldError })
+        .min(0, { error: slotFieldError }).max(4, { error: slotFieldError })
+}, SLOT_FIELDS_MISSING);
+
+
+// ==========================================
+// 9. ПРИБУТОК
+// ==========================================
+
+// --- ЧИСТІ ФУНКЦІЇ ДЛЯ РОЗРАХУНКУ ПРИБУТКУ ---
+function calcGroupProfit(groupId) {
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
+    if (!group) throw new Error('Групу не знайдено');
+
+    const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(groupId);
+    const kidsCount = children.length;
+
+    let totalIncome = 0;
+    for (const child of children) {
+        totalIncome += calcTuition(child).perMonth;
+    }
+
+    const educatorSalary = calcEducatorSalary(kidsCount);
+    const assistantSalary = calcAssistantSalary(kidsCount);
+    const totalExpenses = CONFIG.ROOM_RENT + educatorSalary + assistantSalary;
+
+    return {
+        groupName: group.name,
+        childrenCount: kidsCount,
+        income: totalIncome,
+        expenses: totalExpenses,
+        netProfit: totalIncome - totalExpenses
+    };
+}
+
+function calcKindergartenProfit() {
+    const allActiveChildren = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE isActive = 1').all();
+
+    let totalKindergartenIncome = 0;
+    for (const child of allActiveChildren) {
+        totalKindergartenIncome += calcTuition(child).perMonth;
+    }
+
+    const groups = db.prepare('SELECT id FROM groups').all();
+    let totalGroupExpenses = 0;
+
+    for (const g of groups) {
+        const kidsInGroup = db.prepare('SELECT count(*) as count FROM children WHERE groupId = ? AND isActive = 1').get(g.id).count;
+        totalGroupExpenses += calcEducatorSalary(kidsInGroup) + calcAssistantSalary(kidsInGroup);
+    }
+
+    const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
+    const totalRent = room && room.totalRent ? room.totalRent : 0;
+
+    const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
+    const totalKindergartenExpenses = totalRent + CONFIG.MANAGER_SALARY + (CONFIG.TEACHER_SALARY * teachersCount) + totalGroupExpenses;
+
+    return {
+        totalIncome: totalKindergartenIncome,
+        totalExpenses: totalKindergartenExpenses,
+        totalNetProfit: totalKindergartenIncome - totalKindergartenExpenses
+    };
+}
+
+
+// --- ПРОГНОЗ ПРИБУТКУ (бонус ТЗ, етап 4) ---
+// Симуляція для заданої кількості дітей без запису в БД. Припущення:
+// діти розподіляються по групах рівномірно; на кожну групу припадає одна базова
+// кімната, вихователь і помічник; на кожну дисципліну один викладач і один
+// спеціалізований зал; доходом вважається лише навчання (як у звітах прибутку).
+const FORECAST_MAX_GROUPS = 30;
+const FORECAST_MAX_CHILDREN = 600;
+
+function calcForecast({ children, age, groupSize, discountPercent, paymentPlan, disciplines }) {
+    const groups = Math.ceil(children / groupSize);
+
+    if (groups > FORECAST_MAX_GROUPS) {
+        return { tooManyGroups: true, groups };
+    }
+
+    const base = Math.floor(children / groups);
+    const extra = children % groups;
+    const sizes = [];
+
+    for (let i = 0; i < groups; i++) {
+        sizes.push(i < extra ? base + 1 : base);
+    }
+
+    const tuitionPerChild = calcTuition({ discountPercent, paymentPlan }).perMonth;
+    const income = children * tuitionPerChild;
+
+    const baseRooms = groups;
+    const specializedRooms = disciplines;
+    const totalRooms = baseRooms + specializedRooms;
+
+    const rent = totalRooms * CONFIG.ROOM_RENT;
+    const manager = CONFIG.MANAGER_SALARY;
+    const teachers = disciplines * CONFIG.TEACHER_SALARY;
+    const educators = sizes.reduce((sum, n) => sum + calcEducatorSalary(n), 0);
+    const assistants = sizes.reduce((sum, n) => sum + calcAssistantSalary(n), 0);
+    const expensesTotal = rent + manager + teachers + educators + assistants;
+
+    return {
+        input: { children, age, groupSize, discountPercent, paymentPlan },
+        groups: {
+            count: groups,
+            minSize: Math.min(...sizes),
+            maxSize: Math.max(...sizes)
+        },
+        teachers: disciplines,
+        rooms: { base: baseRooms, specialized: specializedRooms, total: totalRooms },
+        income,
+        expenses: {
+            rent,
+            manager,
+            teachers,
+            educators,
+            assistants,
+            total: expensesTotal
+        },
+        netProfit: income - expensesTotal
+    };
+}
+
+// Query прогнозу: цілі числа з діапазонами, необов'язкові параметри мають значення за замовчуванням
+const forecastInt = (min, max, message) =>
+    z.string(message)
+        .regex(/^\d+$/, message)
+        .transform(Number)
+        .refine((value) => value >= min && value <= max, message);
+
+const DISCOUNT_ERROR = 'Параметр discountPercent має бути 0, 10, 20 або 30';
+
+const forecastQuery = z.object({
+    children: forecastInt(1, FORECAST_MAX_CHILDREN,
+        `Параметр children обов'язковий: ціле число від 1 до ${FORECAST_MAX_CHILDREN}`),
+    age: forecastInt(2, 5, 'Параметр age має бути цілим числом від 2 до 5').default(5),
+    groupSize: forecastInt(1, CONFIG.GROUP_MAX_CHILDREN,
+        `Параметр groupSize має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`)
+        .default(CONFIG.GROUP_MAX_CHILDREN),
+    discountPercent: forecastInt(0, 30, DISCOUNT_ERROR)
+        .refine((value) => CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(value), DISCOUNT_ERROR)
+        .default(0),
+    paymentPlan: z.enum(['monthly', 'yearly'], 'Параметр paymentPlan має бути monthly або yearly')
+        .default('monthly')
+});
+
+
+// ==========================================
+// 10. МАРШРУТИ
+// ==========================================
+// Усі маршрути API зібрані тут, після мідлварів, схем і допоміжних функцій.
+// Порядок реєстрації маршрутів не змінено.
+
+
+// ---------- Авторизація та користувачі ----------
+
+app.post('/auth/login', validate({ body: loginBody }), (req, res) => {
+    const { login, password } = req.valid.body;
+
+    const user = db.prepare(`
+        SELECT id, login, passwordHash, role
+        FROM users
+        WHERE login = ?
+    `).get(login.trim());
+
+    if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
+        return res.status(401).json({
+            error: 'Невірний логін або пароль'
+        });
+    }
+
+    const token = jwt.sign(
+        {
+            userId: user.id,
+            role: user.role
+        },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+    );
+
+    return res.status(200).json({
+        token,
+        tokenType: 'Bearer',
+        expiresIn: 28800,
+        user: {
+            id: user.id,
+            login: user.login,
+            role: user.role
+        }
+    });
+});
+
+app.post('/users', authenticate, requireRole('admin', 'manager'), validate({ body: createUserBody }), (req, res) => {
+    const { login, password, role } = req.valid.body;
+    const normalizedParentId = req.valid.body.parentId ?? null;
+    const normalizedEmployeeId = req.valid.body.employeeId ?? null;
+
+    // Менеджер може створювати тільки батьків
+    if (req.user.role === 'manager' && role !== 'parent') {
+        return res.status(403).json({
+            error: 'Менеджер може створювати лише користувачів із роллю parent'
+        });
+    }
+
+    // Перевірка зв'язків у базі даних (форму зв'язків уже перевірила схема)
+    if (role === 'parent') {
+        const parent = db.prepare(
+            'SELECT id FROM parents WHERE id = ?'
+        ).get(normalizedParentId);
+
+        if (!parent) {
+            return res.status(404).json({
+                error: 'Батька не знайдено'
+            });
+        }
+    } else if (role === 'teacher') {
+        const employee = db.prepare(
+            'SELECT id, position FROM employees WHERE id = ?'
+        ).get(normalizedEmployeeId);
+
+        if (!employee) {
+            return res.status(404).json({
+                error: 'Працівника не знайдено'
+            });
+        }
+
+        if (employee.position !== 'teacher') {
+            return res.status(400).json({
+                error: 'Працівник повинен мати посаду teacher'
+            });
+        }
+    }
+
+    // Перевірка унікальності логіна
+    const existingUser = db.prepare(
+        'SELECT id FROM users WHERE login = ?'
+    ).get(login);
+
+    if (existingUser) {
+        return res.status(409).json({
+            error: 'Користувач із таким логіном уже існує'
+        });
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 12);
+
+    try {
+        const result = db.prepare(`
+            INSERT INTO users (login, passwordHash, role, parentId, employeeId)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            login,
+            passwordHash,
+            role,
+            normalizedParentId,
+            normalizedEmployeeId
+        );
+
+        return res.status(201).json({
+            id: Number(result.lastInsertRowid),
+            login,
+            role,
+            parentId: normalizedParentId,
+            employeeId: normalizedEmployeeId
+        });
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'Користувач із таким логіном уже існує'
+            });
+        }
+
+        console.error('User creation failed:', error);
+
+        return res.status(500).json({
+            error: 'Не вдалося створити користувача'
+        });
+    }
+});
+
+// GET /users - список акаунтів (лише admin); passwordHash ніколи не повертається
+app.get('/users', authenticate, requireRole('admin'), (req, res) => {
+    const users = db.prepare(`
+        SELECT id, login, role, parentId, employeeId
+        FROM users
+        ORDER BY id
+    `).all();
+
+    return res.status(200).json(users);
+});
+
+// DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
+// адміністратор не може видалити сам себе
+app.delete('/users/:id', authenticate, requireRole('admin'), validate({ params: idParams('користувача') }), (req, res) => {
+    const { id } = req.valid.params;
+
+    if (id === req.user.id) {
+        return res.status(409).json({
+            error: 'Не можна видалити власний акаунт'
+        });
+    }
+
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+
+    if (!user) {
+        return res.status(404).json({
+            error: 'Користувача не знайдено'
+        });
+    }
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+    return res.status(204).send();
+});
+
+
+// ---------- Батьки ----------
+
+// GET /parents - отримати всіх батьків
+app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const parents = db.prepare(
+        'SELECT * FROM parents'
+    ).all();
+
+    res.status(200).json(parents);
+});
+
+// GET /parents/:id - отримати батька за ID
+app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька') }), (req, res) => {
+    const { id } = req.valid.params;
+
+    const parent = db.prepare(
+        'SELECT * FROM parents WHERE id = ?'
+    ).get(id);
+
+    if (!parent) {
+        return res.status(404).json({ error: 'Батька не знайдено' });
+    }
+
+    res.status(200).json(parent);
+});
+
+// POST /parents - створити батька
+app.post('/parents', authenticate, requireRole('admin', 'manager'), validate({ body: createParentBody }), (req, res) => {
+    const { fullName, phone, email, relationNote } = req.valid.body;
+
+    const result = db.prepare(`
+        INSERT INTO parents (fullName, phone, email, relationNote)
+        VALUES (?, ?, ?, ?)
+    `).run(
+        fullName,
+        phone || null,
+        email || null,
+        relationNote || null
+    );
+
+    const parent = db.prepare(
+        'SELECT * FROM parents WHERE id = ?'
+    ).get(result.lastInsertRowid);
+
+    res.status(201).json(parent);
+});
+
+// PATCH /parents/:id - оновити батька
+app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('батька'), body: updateParentBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const data = req.valid.body;
+
+    const parent = db.prepare(
+        'SELECT * FROM parents WHERE id = ?'
+    ).get(id);
+
+    if (!parent) {
+        return res.status(404).json({ error: 'Батька не знайдено' });
+    }
+
+    const fullName = data.fullName !== undefined
+        ? data.fullName
+        : parent.fullName;
+
+    const phone = data.phone !== undefined
+        ? data.phone || null
+        : parent.phone;
+
+    const email = data.email !== undefined
+        ? data.email || null
+        : parent.email;
+
+    const relationNote = data.relationNote !== undefined
+        ? data.relationNote || null
+        : parent.relationNote;
+
+    db.prepare(`
+        UPDATE parents
+        SET fullName = ?, phone = ?, email = ?, relationNote = ?
+        WHERE id = ?
+    `).run(fullName, phone, email, relationNote, id);
+
+    const updatedParent = db.prepare(
+        'SELECT * FROM parents WHERE id = ?'
+    ).get(id);
+
+    res.status(200).json(updatedParent);
+});
+
+// DELETE /parents/:id - видалити батька
+app.delete('/parents/:id', authenticate, requireRole('admin'), validate({ params: idParams('батька') }), (req, res) => {
+    const { id } = req.valid.params;
+
+    const parent = db.prepare(
+        'SELECT * FROM parents WHERE id = ?'
+    ).get(id);
+
+    if (!parent) {
+        return res.status(404).json({ error: 'Батька не знайдено' });
+    }
+
+    const hasChildren = db.prepare(
+        'SELECT id FROM children WHERE parentId = ? LIMIT 1'
+    ).get(id);
+
+    const hasAccount = db.prepare(
+        'SELECT id FROM users WHERE parentId = ? LIMIT 1'
+    ).get(id);
+
+    if (hasChildren || hasAccount) {
+        return res.status(409).json({
+            error: 'Неможливо видалити батька, оскільки існують пов’язані записи'
+        });
+    }
+
+
+
+    try {
+        db.prepare(
+            'DELETE FROM parents WHERE id = ?'
+        ).run(id);
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Батько має пов’язані записи'
+            });
+        }
+
+        throw error;
+    }
+
+    res.status(204).send();
+
+
+});
+
+
+// ---------- Працівники ----------
+
+// GET /employees - отримати всіх працівників
+app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) => {
+    const employees = db.prepare(
+        'SELECT * FROM employees'
+    ).all();
+
+    res.status(200).json(employees);
+});
+
+// GET /employees/:id - отримати працівника за ID
+app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника') }), (req, res) => {
+    const { id } = req.valid.params;
+
+    const employee = db.prepare(
+        'SELECT * FROM employees WHERE id = ?'
+    ).get(id);
+
+    if (!employee) {
+        return res.status(404).json({ error: 'Працівника не знайдено' });
+    }
+
+    res.status(200).json(employee);
+});
+
+// POST /employees - створити працівника
+app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({ body: createEmployeeBody }), (req, res) => {
+    const { fullName, position, salaryRate } = req.valid.body;
+
+    const relationError = validateEmployeeRelations(null, position);
+
+    if (relationError) {
+        return res.status(409).json({ error: relationError });
+    }
+
+    const result = db.prepare(`
+        INSERT INTO employees (fullName, position, salaryRate)
+        VALUES (?, ?, ?)
+    `).run(
+        fullName,
+        position,
+        salaryRate ?? null
+    );
+
+    const employee = db.prepare(
+        'SELECT * FROM employees WHERE id = ?'
+    ).get(result.lastInsertRowid);
+
+    res.status(201).json(employee);
+});
+
+// PATCH /employees/:id - оновити працівника
+app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника'), body: updateEmployeeBody }), (req, res) => {
+    const { id } = req.valid.params;
+    const data = req.valid.body;
+
+    const employee = db.prepare(
+        'SELECT * FROM employees WHERE id = ?'
+    ).get(id);
+
+    if (!employee) {
+        return res.status(404).json({ error: 'Працівника не знайдено' });
+    }
+
+    const fullName = data.fullName !== undefined
+        ? data.fullName
+        : employee.fullName;
+
+    const position = data.position !== undefined
+        ? data.position
+        : employee.position;
+
+    const salaryRate = data.salaryRate !== undefined
+        ? data.salaryRate
+        : employee.salaryRate;
+
+
+    const relationError = validateEmployeeRelations(id, position);
+
+    if (relationError) {
+        return res.status(409).json({ error: relationError });
+    }
+
+
+    db.prepare(`
+        UPDATE employees
+        SET fullName = ?, position = ?, salaryRate = ?
+        WHERE id = ?
+    `).run(fullName, position, salaryRate, id);
+
+    const updatedEmployee = db.prepare(
+        'SELECT * FROM employees WHERE id = ?'
+    ).get(id);
+
+    res.status(200).json(updatedEmployee);
+});
+
+// DELETE /employees/:id - видалити працівника
+app.delete('/employees/:id', authenticate, requireRole('admin'), validate({ params: idParams('працівника') }), (req, res) => {
+    const { id } = req.valid.params;
+
+    const employee = db.prepare(
+        'SELECT * FROM employees WHERE id = ?'
+    ).get(id);
+
+    if (!employee) {
+        return res.status(404).json({ error: 'Працівника не знайдено' });
+    }
+
+    const inGroups = db.prepare(`
+        SELECT id FROM groups
+        WHERE educatorId = ? OR assistantId = ?
+        LIMIT 1
+    `).get(id, id);
+
+    const inActivities = db.prepare(
+        'SELECT id FROM activities WHERE teacherId = ? LIMIT 1'
+    ).get(id);
+
+    const inSchedules = db.prepare(
+        'SELECT id FROM schedule_slots WHERE teacherId = ? LIMIT 1'
+    ).get(id);
+
+    const hasAccount = db.prepare(
+        'SELECT id FROM users WHERE employeeId = ? LIMIT 1'
+    ).get(id);
+
+    if (inGroups || inActivities || inSchedules || hasAccount) {
+        return res.status(409).json({
+            error: 'Неможливо видалити працівника, оскільки існують пов’язані записи'
+        });
+    }
+
+
+    try {
+        db.prepare(
+            'DELETE FROM employees WHERE id = ?'
+        ).run(id);
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            return res.status(409).json({
+                error: 'Працівник має пов’язані записи'
+            });
+        }
+
+        throw error;
+    }
+
+    res.status(204).send();
+
+});
+
+
+// ---------- Групи ----------
 
 // GET /groups - адмін/менеджер: всі; викладач: свої; батько: групи своїх дітей
 app.get('/groups', authenticate, (req, res) => {
@@ -1617,145 +2152,8 @@ app.delete(
     },
 );
 
-// ---------- Діти: валідація ----------
 
-const BIRTH_DATE_FORMAT_ERROR = 'Дата народження має бути у форматі YYYY-MM-DD';
-
-const childFields = {
-    fullName: requiredText('Вкажіть коректне ПІБ дитини'),
-    birthDate: z.string(BIRTH_DATE_FORMAT_ERROR).superRefine((value, ctx) => {
-        if (!isValidDateString(value)) {
-            return ctx.addIssue({ code: 'custom', message: BIRTH_DATE_FORMAT_ERROR });
-        }
-
-        if (value > new Date().toISOString().slice(0, 10)) {
-            return ctx.addIssue({
-                code: 'custom',
-                message: 'Дата народження не може бути в майбутньому',
-            });
-        }
-
-        const age = calcAge(value);
-
-        if (age < MIN_CHILD_AGE || age > MAX_CHILD_AGE) {
-            ctx.addIssue({
-                code: 'custom',
-                message: `Вік дитини має бути від ${MIN_CHILD_AGE} до ${MAX_CHILD_AGE} років (зараз ${age})`,
-            });
-        }
-    }),
-    groupId: idField('Некоректний groupId').nullish(),
-    discountPercent: z.literal(CONFIG.ALLOWED_DISCOUNT_PERCENTS, 'Знижка має бути 0, 10, 20 або 30').optional(),
-    paymentPlan: z.enum(['monthly', 'yearly'], 'paymentPlan має бути monthly або yearly').optional(),
-    notes: optionalText('Некоректне поле: notes'),
-    isActive: z.literal([true, false, 0, 1], 'isActive має бути true або false').optional(),
-};
-
-// Основний представник (платник) і необов’язкові додаткові опікуни
-const PARENT_ID_ERROR = 'parentId обов’язковий і має бути додатним цілим числом';
-const GUARDIANS_LIST_ERROR = `guardianIds має бути масивом (до ${MAX_GUARDIANS} елементів)`;
-const GUARDIANS_UNIQUE_ERROR = 'guardianIds мають бути унікальними додатними цілими числами і не містити parentId';
-
-const parentLinkFields = {
-    parentId: idField(PARENT_ID_ERROR),
-    guardianIds: z.array(idField(GUARDIANS_UNIQUE_ERROR), GUARDIANS_LIST_ERROR)
-        .max(MAX_GUARDIANS, GUARDIANS_LIST_ERROR).nullish(),
-};
-
-const parentsAreUnique = ({ parentId, guardianIds }) => {
-    const all = [parentId, ...(guardianIds ?? [])];
-
-    return new Set(all).size === all.length;
-};
-
-const uniqueParentsRule = { path: ['guardianIds'], error: GUARDIANS_UNIQUE_ERROR };
-
-const createChildBody = strictBody({ ...childFields, ...parentLinkFields })
-    .refine(parentsAreUnique, uniqueParentsRule);
-
-// Представників у PATCH змінювати не можна: для цього є PUT /children/:id/parents
-const updateChildBody = patchBody(childFields, {
-    unknownField: (key) => (key === 'parentId' || key === 'guardianIds'
-        ? 'Представників змінюйте через PUT /children/:id/parents'
-        : `Невідоме поле: ${key}`),
-});
-
-// Тіло PUT /children/:id/parents (зайві поля, як і раніше, ігноруються)
-const childParentsBody = z.object(parentLinkFields, 'Некоректне тіло запиту')
-    .refine(parentsAreUnique, uniqueParentsRule);
-
-// Query GET /children?groupId=&isActive=
-const childrenQuery = z.object({
-    groupId: idParam('Некоректний groupId').optional(),
-    isActive: z.enum(['0', '1', 'true', 'false'], 'Некоректний isActive')
-        .transform((value) => (value === '1' || value === 'true' ? 1 : 0))
-        .optional(),
-});
-
-// Усі представники мають існувати в базі даних (форму перевірила схема)
-function checkParentsExist(parentId, guardianIds) {
-    const all = [parentId, ...(guardianIds ?? [])];
-
-    const { cnt } = db
-        .prepare(
-            `SELECT COUNT(*) AS cnt FROM parents
-             WHERE id IN (${all.map(() => '?').join(',')})`,
-        )
-        .get(...all);
-
-    if (cnt !== all.length) {
-        return {
-            status: 400,
-            error: 'Одного або кількох представників не знайдено',
-        };
-    }
-
-    return null;
-}
-
-// Перевірка призначення до групи: існування, вік, місткість
-function checkGroupAssignment(
-    groupId,
-    birthDate,
-    childId,
-    { checkAge = true, checkCapacity = true } = {},
-) {
-    const group = db
-        .prepare('SELECT id, ageCategory, capacity FROM groups WHERE id = ?')
-        .get(groupId);
-
-    if (!group) {
-        return { status: 400, error: 'Групу не знайдено' };
-    }
-
-    if (checkAge && ENFORCE_AGE_MATCH) {
-        const age = calcAge(birthDate);
-
-        if (age !== group.ageCategory) {
-            return {
-                status: 409,
-                error: `Вік дитини (${age}) не відповідає віковій категорії групи (${group.ageCategory})`,
-            };
-        }
-    }
-
-    if (checkCapacity) {
-        const { cnt } = db
-            .prepare(
-                `SELECT COUNT(*) AS cnt FROM children
-                 WHERE groupId = ? AND isActive = 1 AND id <> ?`,
-            )
-            .get(groupId, childId ?? 0);
-
-        if (cnt >= group.capacity) {
-            return { status: 409, error: 'Група заповнена' };
-        }
-    }
-
-    return null;
-}
-
-// ---------- Діти: маршрути ----------
+// ---------- Діти ----------
 
 // GET /children?groupId=&isActive=
 app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res) => {
@@ -2098,9 +2496,8 @@ app.delete(
     },
 );
 
-// ==========================================
-// 5. КІМНАТИ ТА ЗАНЯТТЯ
-// ==========================================
+
+// ---------- Кімнати ----------
 
 app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
     try {
@@ -2117,25 +2514,6 @@ app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
             error: 'Не вдалося отримати список кімнат'
         });
     }
-});
-
-const ROOM_ERROR = 'Некоректні дані кімнати';
-
-const roomFields = {
-    name: requiredText(ROOM_ERROR),
-    type: z.enum(['base', 'specialized'], ROOM_ERROR),
-    rent: z.number(ROOM_ERROR).int(ROOM_ERROR).min(0, ROOM_ERROR)
-};
-
-// Створення: оренда за замовчуванням з CONFIG, зайві поля ігноруються
-const createRoomBody = z.object({
-    ...roomFields,
-    rent: roomFields.rent.default(CONFIG.ROOM_RENT)
-}, ROOM_ERROR);
-
-const updateRoomBody = patchBody(roomFields, {
-    invalidBody: ROOM_ERROR,
-    unknownField: () => ROOM_ERROR
 });
 
 app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати') }), (req, res) => {
@@ -2162,7 +2540,6 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ 
         });
     }
 });
-
 
 app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ body: createRoomBody }), (req, res) => {
     const { name, type, rent } = req.valid.body;
@@ -2194,7 +2571,6 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ bod
         });
     }
 });
-
 
 app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати'), body: updateRoomBody }), (req, res) => {
     const { id } = req.valid.params;
@@ -2271,7 +2647,6 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate(
     }
 });
 
-
 app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: idParams('кімнати') }), (req, res) => {
     const { id } = req.valid.params;
 
@@ -2324,6 +2699,9 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: 
     }
 });
 
+
+// ---------- Дисципліни ----------
+
 app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
     try {
         const activities = db.prepare(`
@@ -2342,22 +2720,6 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
         });
     }
 });
-
-const ACTIVITY_ERROR = 'Некоректні дані дисципліни';
-
-const activityFields = {
-    name: requiredText(ACTIVITY_ERROR),
-    teacherId: idField(ACTIVITY_ERROR).nullish(),
-    roomId: idField(ACTIVITY_ERROR).nullish()
-};
-
-const activityBodyOptions = {
-    invalidBody: ACTIVITY_ERROR,
-    unknownField: () => ACTIVITY_ERROR
-};
-
-const createActivityBody = strictBody(activityFields, activityBodyOptions);
-const updateActivityBody = patchBody(activityFields, activityBodyOptions);
 
 app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни') }), (req, res) => {
     const { id } = req.valid.params;
@@ -2597,136 +2959,8 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ par
     }
 });
 
-function findScheduleConflict(slot, ignoreId = null) {
-    const { groupId, teacherId, roomId, dayOfWeek, startTime } = slot;
 
-    const conflicts = [
-        { column: 'groupId', value: groupId, type: 'group_busy' },
-        { column: 'teacherId', value: teacherId, type: 'teacher_busy' },
-        { column: 'roomId', value: roomId, type: 'room_busy' }
-    ];
-
-    for (const conflict of conflicts) {
-        const existing = db.prepare(`
-            SELECT id
-            FROM schedule_slots
-            WHERE dayOfWeek = ?
-              AND startTime = ?
-              AND ${conflict.column} = ?
-              AND id IS NOT ?
-            ORDER BY id ASC
-            LIMIT 1
-        `).get(
-            dayOfWeek,
-            startTime,
-            conflict.value,
-            ignoreId
-        );
-
-        if (existing) {
-            return {
-                type: conflict.type,
-                slotId: existing.id
-            };
-        }
-    }
-
-    return null;
-}
-
-
-
-// ==========================================
-// 6. РАХУНКИ ТА ПЛАТЕЖІ
-// ==========================================
-
-// Чисті функції розрахунку: без доступу до БД, лише цілі гривні.
-// Контракт описаний у PROJECT_TASKS.md. Некоректний вхід дає RangeError,
-// тому маршрути мають перевіряти дані до виклику.
-
-// calcTuition({ discountPercent, paymentPlan }) -> { perMonth, perYear }
-// perMonth це місячний еквівалент (для плану yearly це 1/12 річної суми),
-// саме він іде в розрахунок прибутку.
-function calcTuition(child) {
-    if (!child || typeof child !== 'object') {
-        throw new RangeError('calcTuition: очікується об\'єкт дитини');
-    }
-
-    const { discountPercent, paymentPlan } = child;
-
-    if (!CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(discountPercent)) {
-        throw new RangeError('calcTuition: некоректна знижка');
-    }
-
-    if (paymentPlan !== 'monthly' && paymentPlan !== 'yearly') {
-        throw new RangeError('calcTuition: некоректний план оплати');
-    }
-
-    const yearBase = Math.round(
-        CONFIG.BASE_TUITION_MONTH * CONFIG.MONTHS_IN_YEAR *
-        (100 - discountPercent) / 100
-    );
-
-    const perYear = paymentPlan === 'yearly'
-        ? Math.round(yearBase * (100 - CONFIG.YEARLY_PLAN_DISCOUNT_PERCENT) / 100)
-        : yearBase;
-
-    return {
-        perMonth: Math.round(perYear / CONFIG.MONTHS_IN_YEAR),
-        perYear
-    };
-}
-
-// calcMeals(age) -> { perDay, perMonth, perYear }
-// age визначає викликач: group.ageCategory, а без групи повний вік за birthDate.
-// Пільги на харчування не діють, у прибуток садка воно не входить.
-function calcMeals(age) {
-    if (!Number.isInteger(age) || CONFIG.MEAL_PER_DAY[age] === undefined) {
-        throw new RangeError('calcMeals: вік має бути цілим числом від 2 до 5');
-    }
-
-    const perDay = CONFIG.MEAL_PER_DAY[age];
-    const perMonth = perDay * CONFIG.WORK_DAYS_PER_MONTH;
-
-    return {
-        perDay,
-        perMonth,
-        perYear: perMonth * CONFIG.MONTHS_IN_YEAR
-    };
-}
-
-function assertKidsCount(kidsCount, fnName) {
-    if (
-        !Number.isInteger(kidsCount) ||
-        kidsCount < 0 ||
-        kidsCount > CONFIG.GROUP_MAX_CHILDREN
-    ) {
-        throw new RangeError(
-            `${fnName}: кількість дітей має бути цілим числом від 0 до ${CONFIG.GROUP_MAX_CHILDREN}`
-        );
-    }
-}
-
-// calcEducatorSalary(kidsCount) -> зарплата вихователя за місяць
-// 2 000 за кожну з перших 12 дітей, 5 000 за кожну з 13-ї по 20-ту.
-function calcEducatorSalary(kidsCount) {
-    assertKidsCount(kidsCount, 'calcEducatorSalary');
-
-    const base = Math.min(kidsCount, CONFIG.SALARY_BASE_CHILDREN);
-    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
-
-    return base * CONFIG.EDUCATOR_RATE_BASE + over * CONFIG.EDUCATOR_RATE_OVER;
-}
-
-// calcAssistantSalary(kidsCount) -> зарплата помічника за місяць
-// 20 000 плюс 3 000 за кожну дитину з 13-ї по 20-ту.
-function calcAssistantSalary(kidsCount) {
-    assertKidsCount(kidsCount, 'calcAssistantSalary');
-
-    const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
-
-    return CONFIG.ASSISTANT_BASE_SALARY + over * CONFIG.ASSISTANT_EXTRA_PER_CHILD;
-}
+// ---------- Рахунки ----------
 
 // GET /children/:id/invoice - рахунок рахується на льоту за поточними даними дитини.
 // Роли: admin і manager для будь-якої дитини; parent лише для своєї дитини і лише
@@ -2802,58 +3036,7 @@ app.get(
 );
 
 
-// ==========================================
-// РОЗКЛАД
-// ==========================================
-
-function generateScheduleLogic() {
-    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
-    const activities = db.prepare('SELECT * FROM activities ORDER BY id ASC LIMIT 5').all();
-
-    if (activities.length < 5) {
-        throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
-    }
-
-    for (const act of activities) {
-        if (!act.teacherId || !act.roomId) {
-            throw new Error(`Дисципліна "${act.name}" не має призначеного викладача або кімнати.`);
-        }
-    }
-
-    const insertSlot = db.prepare(`
-        INSERT INTO schedule_slots (groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const generate = db.transaction(() => {
-        db.prepare('DELETE FROM schedule_slots').run();
-        const numActivities = 5;
-
-        for (let d = 0; d < 5; d++) {
-            for (let i = 0; i < groups.length; i++) {
-                const group = groups[i];
-                const activityIndex = (i + d) % numActivities;
-                const activity = activities[activityIndex];
-
-                const slotIndex = Math.floor(i / numActivities);
-                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30);
-
-                const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
-                const mm = (totalMinutes % 60).toString().padStart(2, '0');
-                const startTime = `${hh}:${mm}`;
-
-                insertSlot.run(
-                    group.id, activity.id, activity.teacherId,
-                    activity.roomId, d, startTime, 30
-                );
-            }
-        }
-    });
-
-    generate();
-}
-
-// --- ЕНДПОІНТИ РОЗКЛАДУ ---
+// ---------- Розклад ----------
 
 // 1. Згенерувати розклад
 app.post('/schedules/generate', authenticate, requireRole('admin', 'manager'), (req, res) => {
@@ -2944,17 +3127,6 @@ app.get('/teachers/:id/schedule', authenticate, validate({ params: idParams('в�
     res.status(200).json(schedule);
 });
 
-// Тіло PATCH /schedules/:id: обидва поля обов'язкові, час на сітці 09:30-12:00, день 0-4 (лише цілі)
-const SLOT_FIELDS_MISSING = 'Відсутні обов\'язкові поля: startTime, dayOfWeek';
-const SLOT_FIELDS_INVALID = 'Недійсний час або день тижня. Дозволено: 09:30-12:00, дні: 0-4 (тільки цілі числа).';
-const slotFieldError = (issue) => (issue.input === undefined ? SLOT_FIELDS_MISSING : SLOT_FIELDS_INVALID);
-
-const moveSlotBody = z.object({
-    startTime: z.enum(['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'], { error: slotFieldError }),
-    dayOfWeek: z.number({ error: slotFieldError }).int({ error: slotFieldError })
-        .min(0, { error: slotFieldError }).max(4, { error: slotFieldError })
-}, SLOT_FIELDS_MISSING);
-
 // 4. Оновити слот розкладу (перенести урок)
 app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teacher'), validate({ params: idParams('розкладу') }), (req, res) => {
     try {
@@ -3012,66 +3184,8 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
     }
 });
 
-// ==========================================
-// ПРИБУТОК
-// ==========================================
 
-// --- ЧИСТІ ФУНКЦІЇ ДЛЯ РОЗРАХУНКУ ПРИБУТКУ ---
-function calcGroupProfit(groupId) {
-    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
-    if (!group) throw new Error('Групу не знайдено');
-
-    const children = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE groupId = ? AND isActive = 1').all(groupId);
-    const kidsCount = children.length;
-
-    let totalIncome = 0;
-    for (const child of children) {
-        totalIncome += calcTuition(child).perMonth;
-    }
-
-    const educatorSalary = calcEducatorSalary(kidsCount);
-    const assistantSalary = calcAssistantSalary(kidsCount);
-    const totalExpenses = CONFIG.ROOM_RENT + educatorSalary + assistantSalary;
-
-    return {
-        groupName: group.name,
-        childrenCount: kidsCount,
-        income: totalIncome,
-        expenses: totalExpenses,
-        netProfit: totalIncome - totalExpenses
-    };
-}
-
-function calcKindergartenProfit() {
-    const allActiveChildren = db.prepare('SELECT discountPercent, paymentPlan FROM children WHERE isActive = 1').all();
-
-    let totalKindergartenIncome = 0;
-    for (const child of allActiveChildren) {
-        totalKindergartenIncome += calcTuition(child).perMonth;
-    }
-
-    const groups = db.prepare('SELECT id FROM groups').all();
-    let totalGroupExpenses = 0;
-
-    for (const g of groups) {
-        const kidsInGroup = db.prepare('SELECT count(*) as count FROM children WHERE groupId = ? AND isActive = 1').get(g.id).count;
-        totalGroupExpenses += calcEducatorSalary(kidsInGroup) + calcAssistantSalary(kidsInGroup);
-    }
-
-    const room = db.prepare('SELECT SUM(rent) as totalRent FROM rooms').get();
-    const totalRent = room && room.totalRent ? room.totalRent : 0;
-
-    const teachersCount = db.prepare("SELECT COUNT(*) as count FROM employees WHERE position = 'teacher'").get().count;
-    const totalKindergartenExpenses = totalRent + CONFIG.MANAGER_SALARY + (CONFIG.TEACHER_SALARY * teachersCount) + totalGroupExpenses;
-
-    return {
-        totalIncome: totalKindergartenIncome,
-        totalExpenses: totalKindergartenExpenses,
-        totalNetProfit: totalKindergartenIncome - totalKindergartenExpenses
-    };
-}
-
-// --- ЕНДПОІНТИ ПРИБУТКУ ---
+// ---------- Прибуток і прогноз ----------
 
 // 5. Отримати прибуток для конкретної групи
 app.get('/groups/:id/profit', authenticate, requireRole('admin'), validate({ params: idParams('групи') }), (req, res) => {
@@ -3098,89 +3212,7 @@ app.get('/admin/profit', authenticate, requireRole('admin'), (req, res) => {
     }
 });
 
-// --- ПРОГНОЗ ПРИБУТКУ (бонус ТЗ, етап 4) ---
-// Симуляція для заданої кількості дітей без запису в БД. Припущення:
-// діти розподіляються по групах рівномірно; на кожну групу припадає одна базова
-// кімната, вихователь і помічник; на кожну дисципліну один викладач і один
-// спеціалізований зал; доходом вважається лише навчання (як у звітах прибутку).
-const FORECAST_MAX_GROUPS = 30;
-const FORECAST_MAX_CHILDREN = 600;
-
-function calcForecast({ children, age, groupSize, discountPercent, paymentPlan, disciplines }) {
-    const groups = Math.ceil(children / groupSize);
-
-    if (groups > FORECAST_MAX_GROUPS) {
-        return { tooManyGroups: true, groups };
-    }
-
-    const base = Math.floor(children / groups);
-    const extra = children % groups;
-    const sizes = [];
-
-    for (let i = 0; i < groups; i++) {
-        sizes.push(i < extra ? base + 1 : base);
-    }
-
-    const tuitionPerChild = calcTuition({ discountPercent, paymentPlan }).perMonth;
-    const income = children * tuitionPerChild;
-
-    const baseRooms = groups;
-    const specializedRooms = disciplines;
-    const totalRooms = baseRooms + specializedRooms;
-
-    const rent = totalRooms * CONFIG.ROOM_RENT;
-    const manager = CONFIG.MANAGER_SALARY;
-    const teachers = disciplines * CONFIG.TEACHER_SALARY;
-    const educators = sizes.reduce((sum, n) => sum + calcEducatorSalary(n), 0);
-    const assistants = sizes.reduce((sum, n) => sum + calcAssistantSalary(n), 0);
-    const expensesTotal = rent + manager + teachers + educators + assistants;
-
-    return {
-        input: { children, age, groupSize, discountPercent, paymentPlan },
-        groups: {
-            count: groups,
-            minSize: Math.min(...sizes),
-            maxSize: Math.max(...sizes)
-        },
-        teachers: disciplines,
-        rooms: { base: baseRooms, specialized: specializedRooms, total: totalRooms },
-        income,
-        expenses: {
-            rent,
-            manager,
-            teachers,
-            educators,
-            assistants,
-            total: expensesTotal
-        },
-        netProfit: income - expensesTotal
-    };
-}
-
 // GET /admin/forecast?children=150&age=5&groupSize=20&discountPercent=0&paymentPlan=monthly
-// Query прогнозу: цілі числа з діапазонами, необов'язкові параметри мають значення за замовчуванням
-const forecastInt = (min, max, message) =>
-    z.string(message)
-        .regex(/^\d+$/, message)
-        .transform(Number)
-        .refine((value) => value >= min && value <= max, message);
-
-const DISCOUNT_ERROR = 'Параметр discountPercent має бути 0, 10, 20 або 30';
-
-const forecastQuery = z.object({
-    children: forecastInt(1, FORECAST_MAX_CHILDREN,
-        `Параметр children обов'язковий: ціле число від 1 до ${FORECAST_MAX_CHILDREN}`),
-    age: forecastInt(2, 5, 'Параметр age має бути цілим числом від 2 до 5').default(5),
-    groupSize: forecastInt(1, CONFIG.GROUP_MAX_CHILDREN,
-        `Параметр groupSize має бути цілим числом від 1 до ${CONFIG.GROUP_MAX_CHILDREN}`)
-        .default(CONFIG.GROUP_MAX_CHILDREN),
-    discountPercent: forecastInt(0, 30, DISCOUNT_ERROR)
-        .refine((value) => CONFIG.ALLOWED_DISCOUNT_PERCENTS.includes(value), DISCOUNT_ERROR)
-        .default(0),
-    paymentPlan: z.enum(['monthly', 'yearly'], 'Параметр paymentPlan має бути monthly або yearly')
-        .default('monthly')
-});
-
 app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query: forecastQuery }), (req, res) => {
     const { children, age, groupSize, discountPercent, paymentPlan } = req.valid.query;
 
@@ -3218,14 +3250,9 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query:
     return res.status(200).json({ ...forecast, breakEvenChildren, comparison });
 });
 
-// ==========================================
-// 7. ОБРОБКА ПОМИЛОК
-// ==========================================
-// Обробники помилок розміщені після маршрутів API.
 
-// ==========================================
-// 8. ПЕРЕВІРКА РОБОТИ API
-// ==========================================
+// ---------- Перевірка роботи API ----------
+
 app.get(['/health', '/api/health'], (req, res) => {
     try {
         db.prepare('SELECT 1').get();
@@ -3244,9 +3271,13 @@ app.get(['/health', '/api/health'], (req, res) => {
     }
 });
 
+
 // ==========================================
-// 404 - НЕІСНУЮЧИЙ МАРШРУТ
+// 11. ОБРОБКА ПОМИЛОК
 // ==========================================
+// Обробники помилок розміщені після всіх маршрутів API.
+
+// ---------- 404 - неіснуючий маршрут ----------
 
 app.use((req, res) => {
     res.status(404).json({
@@ -3254,9 +3285,7 @@ app.use((req, res) => {
     });
 });
 
-// ==========================================
-// 500 - ГЛОБАЛЬНА ОБРОБКА ПОМИЛОК
-// ==========================================
+// ---------- 500 - глобальна обробка помилок ----------
 
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
@@ -3278,7 +3307,7 @@ app.use((err, req, res, next) => {
 });
 
 // ==========================================
-// 9. ЗАПУСК СЕРВЕРА
+// 12. ЗАПУСК СЕРВЕРА
 // ==========================================
 
 app.listen(PORT, () => {
