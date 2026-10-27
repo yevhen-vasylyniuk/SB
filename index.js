@@ -313,6 +313,30 @@ function seedDatabase() {
 seedDatabase();
 
 
+// ---------- Спільна валідація (використовується в усіх блоках) ----------
+
+// ID із шляху або запиту: лише рядок із десяткових цифр без ведучого нуля
+// й без знака ("1.0", "01", "+1", "1e2", "0x1", " 1" відхиляються).
+// Повертає додатне ціле число або null.
+function parseId(raw) {
+    if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) {
+        return null;
+    }
+
+    const id = Number(raw);
+
+    return Number.isSafeInteger(id) ? id : null;
+}
+
+// Тіло запиту має бути звичайним JSON-об'єктом (не null і не масив).
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Додатне ціле число, яке JavaScript зберігає точно (для ID у тілі запиту).
+function isPositiveInt(value) {
+    return Number.isSafeInteger(value) && value > 0;
+}
 
 
 // ==========================================
@@ -616,10 +640,9 @@ app.get('/users', authenticate, requireRole('admin'), (req, res) => {
 // DELETE /users/:id - видалення акаунта (лише admin за ТЗ);
 // адміністратор не може видалити сам себе
 app.delete('/users/:id', authenticate, requireRole('admin'), (req, res) => {
-    const rawId = req.params.id;
-    const id = Number(rawId);
+    const id = parseId(req.params.id);
 
-    if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id)) {
+    if (id === null) {
         return res.status(400).json({
             error: 'Некоректний ID користувача'
         });
@@ -677,23 +700,6 @@ function validateParent(data, isUpdate = false) {
 }
 
 
-function getParentId(req) {
-    const rawId = req.params.id;
-
-    if (!/^[1-9]\d*$/.test(rawId)) {
-        return null;
-    }
-
-    const id = Number(rawId);
-
-    if (!Number.isSafeInteger(id)) {
-        return null;
-    }
-
-    return id;
-}
-
-
 // GET /parents - отримати всіх батьків
 app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const parents = db.prepare(
@@ -705,7 +711,7 @@ app.get('/parents', authenticate, requireRole('admin', 'manager'), (req, res) =>
 
 // GET /parents/:id - отримати батька за ID
 app.get('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = getParentId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID батька' });
@@ -757,7 +763,7 @@ app.post('/parents', authenticate, requireRole('admin', 'manager'), (req, res) =
 
 // PATCH /parents/:id - оновити батька
 app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = getParentId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID батька' });
@@ -815,7 +821,7 @@ app.patch('/parents/:id', authenticate, requireRole('admin', 'manager'), (req, r
 
 // DELETE /parents/:id - видалити батька
 app.delete('/parents/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = getParentId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID батька' });
@@ -897,23 +903,6 @@ function validateEmployee(data, isUpdate = false) {
 }
 
 
-function getEmployeeId(req) {
-    const rawId = req.params.id;
-
-    if (!/^[1-9]\d*$/.test(rawId)) {
-        return null;
-    }
-
-    const id = Number(rawId);
-
-    if (!Number.isSafeInteger(id)) {
-        return null;
-    }
-
-    return id;
-}
-
-
 function validateEmployeeRelations(id, position) {
     if (position === 'manager') {
         const existing = db.prepare(
@@ -976,7 +965,7 @@ app.get('/employees', authenticate, requireRole('admin', 'manager'), (req, res) 
 
 // GET /employees/:id - отримати працівника за ID
 app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = getEmployeeId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID працівника' });
@@ -1035,7 +1024,7 @@ app.post('/employees', authenticate, requireRole('admin', 'manager'), (req, res)
 
 // PATCH /employees/:id - оновити працівника
 app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = getEmployeeId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID працівника' });
@@ -1097,7 +1086,7 @@ app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), (req,
 
 // DELETE /employees/:id - видалити працівника
 app.delete('/employees/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = getEmployeeId(req);
+    const id = parseId(req.params.id);
 
     if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID працівника' });
@@ -1170,23 +1159,7 @@ const MAX_GUARDIANS = 9; // максимум додаткових опікуні
 
 // ---------- Допоміжні функції ----------
 
-function parseId(raw) {
-    if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) {
-        return null;
-    }
-
-    const id = Number(raw);
-
-    return Number.isSafeInteger(id) ? id : null;
-}
-
-function isPlainObject(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isPositiveInt(value) {
-    return Number.isSafeInteger(value) && value > 0;
-}
+// parseId, isPlainObject, isPositiveInt - у спільному блоці валідації (кінець блоку 1).
 
 function toBit(value) {
     return value === true || value === 1 ? 1 : 0;
@@ -2398,9 +2371,9 @@ app.get('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => {
 });
 
 app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({
             error: 'Некоректний ID кімнати'
         });
@@ -2477,15 +2450,15 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), (req, res) => 
 
 
 app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID кімнати' });
     }
 
     const body = req.body;
 
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    if (!isPlainObject(body)) {
         return res.status(400).json({ error: 'Некоректні дані кімнати' });
     }
 
@@ -2591,9 +2564,9 @@ app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), (req, res
 
 
 app.delete('/rooms/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID кімнати' });
     }
 
@@ -2666,9 +2639,9 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
 });
 
 app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({
             error: 'Некоректний ID дисципліни'
         });
@@ -2701,7 +2674,7 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, 
 app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
     const body = req.body;
 
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    if (!isPlainObject(body)) {
         return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
@@ -2716,8 +2689,8 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
     if (
         typeof name !== 'string' ||
         !name.trim() ||
-        (teacherId !== null && (!Number.isSafeInteger(teacherId) || teacherId <= 0)) ||
-        (roomId !== null && (!Number.isSafeInteger(roomId) || roomId <= 0))
+        (teacherId !== null && !isPositiveInt(teacherId)) ||
+        (roomId !== null && !isPositiveInt(roomId))
     ) {
         return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
@@ -2798,15 +2771,15 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), (req, res
 });
 
 app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID дисципліни' });
     }
 
     const body = req.body;
 
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    if (!isPlainObject(body)) {
         return res.status(400).json({ error: 'Некоректні дані дисципліни' });
     }
 
@@ -2839,10 +2812,8 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
         if (
             typeof name !== 'string' ||
             !name.trim() ||
-            (teacherId !== null &&
-                (!Number.isSafeInteger(teacherId) || teacherId <= 0)) ||
-            (roomId !== null &&
-                (!Number.isSafeInteger(roomId) || roomId <= 0))
+            (teacherId !== null && !isPositiveInt(teacherId)) ||
+            (roomId !== null && !isPositiveInt(roomId))
         ) {
             return res.status(400).json({ error: 'Некоректні дані дисципліни' });
         }
@@ -2916,9 +2887,9 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), (req
 });
 
 app.delete('/activities/:id', authenticate, requireRole('admin'), (req, res) => {
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
+    if (id === null) {
         return res.status(400).json({ error: 'Некоректний ID дисципліни' });
     }
 
