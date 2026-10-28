@@ -277,7 +277,7 @@ function initializeDatabase() {
 
 initializeDatabase();
 
-
+// dimadiamdimma
 function seedDatabase() {
     const seed = db.transaction(() => {
         const activities = [
