@@ -474,7 +474,7 @@ function authenticate(req, res, next) {
 
         req.user = user;
         next();
-    } catch (error) {
+    } catch {
         return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Недійсний або прострочений токен'
         });
@@ -3301,7 +3301,7 @@ app.use((req, res) => {
 
 // ---------- 500 - глобальна обробка помилок ----------
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
     console.error('Server error:', err);
 
     // Некоректний JSON у тілі запиту
