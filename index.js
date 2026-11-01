@@ -3146,10 +3146,11 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
     try {
         const { id: slotId } = req.valid.params;
 
-        // За ТЗ: спочатку перевіряємо існування (404), тому тіло перевіряємо
-        // схемою тут, після пошуку слоту, а не в middleware validate()
+        // За ТЗ: спочатку 404, тому тіло перевіряємо тут, після пошуку слоту
         const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
-        if (!currentSlot) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Слот не знайдено' });
+        if (!currentSlot) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Слот не знайдено' });
+        }
 
         const parsedBody = moveSlotBody.safeParse(req.body);
         if (!parsedBody.success) {
@@ -3158,24 +3159,38 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
 
         const { startTime, dayOfWeek } = parsedBody.data;
 
-        // Перевірка: вчитель може міняти тільки свої заняття (403)
+        // Вчитель може міняти тільки свої заняття
         if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
             return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Ви можете змінювати лише власні заняття.' });
         }
 
-        // Перевірка колізій через функцію Громова
+        // Не більше одного заняття на день для групи (поточний слот виключено через id != ?)
+        const groupDayConflict = db.prepare(`
+            SELECT id FROM schedule_slots
+            WHERE groupId = ? AND dayOfWeek = ? AND id != ?
+            LIMIT 1
+        `).get(currentSlot.groupId, dayOfWeek, slotId);
+
+        if (groupDayConflict) {
+            return res.status(HTTP_STATUS.CONFLICT).json({
+                error: 'Колізія розкладу: цій групі вже призначено інше заняття на обраний день.',
+                type: 'group_limit',
+                slotId: groupDayConflict.id
+            });
+        }
+
+        // Колізії часу: група, викладач, кімната
         const conflict = findScheduleConflict({
             groupId: currentSlot.groupId,
             teacherId: currentSlot.teacherId,
             roomId: currentSlot.roomId,
-            dayOfWeek: dayOfWeek,
-            startTime: startTime,
-            durationMin: 30
+            dayOfWeek,
+            startTime
         }, slotId);
 
         if (conflict) {
             return res.status(HTTP_STATUS.CONFLICT).json({
-                error: 'Колізія розкладу: час вже зайнятий',
+                error: 'Колізія розкладу: час, викладач або кімната вже зайняті',
                 type: conflict.type,
                 slotId: conflict.slotId
             });
@@ -3190,11 +3205,12 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         res.status(HTTP_STATUS.OK).json({ message: 'Слот успішно оновлено' });
 
     } catch (error) {
-        // Перехоплення унікальності на рівні БД
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(HTTP_STATUS.CONFLICT).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
         }
-        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
+
+        console.error('Failed to update schedule slot:', error);
+        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
