@@ -548,10 +548,38 @@ const createUserBody = z.discriminatedUnion('role', [
 // ==========================================
 
 
+// Контакти батьків. Порожній рядок і null означають «немає значення»
+// (у маршрутах вони зберігаються як NULL), тому PATCH може очистити поле.
+const PHONE_ERROR = 'Некоректний телефон: допустимі цифри, пробіли, дефіси, дужки й «+» на початку (від 10 до 15 цифр)';
+const EMAIL_ERROR = 'Некоректний email';
+const MIN_PHONE_DIGITS = 10;
+const MAX_PHONE_DIGITS = 15; // обмеження E.164
+const MAX_EMAIL_LENGTH = 254;
+
+function isValidPhone(value) {
+    if (value === '') {
+        return true;
+    }
+
+    if (!/^\+?[\d\s\-()]+$/.test(value)) {
+        return false;
+    }
+
+    const digits = value.replace(/\D/g, '').length;
+
+    return digits >= MIN_PHONE_DIGITS && digits <= MAX_PHONE_DIGITS;
+}
+
+const emailFormat = z.email();
+
+function isValidEmail(value) {
+    return value === '' || (value.length <= MAX_EMAIL_LENGTH && emailFormat.safeParse(value).success);
+}
+
 const parentFields = {
     fullName: requiredText('Вкажіть коректне ПІБ батька'),
-    phone: optionalText('Некоректне поле: phone'),
-    email: optionalText('Некоректне поле: email'),
+    phone: z.string(PHONE_ERROR).trim().refine(isValidPhone, PHONE_ERROR).nullish(),
+    email: z.string(EMAIL_ERROR).trim().refine(isValidEmail, EMAIL_ERROR).nullish(),
     relationNote: optionalText('Некоректне поле: relationNote')
 };
 
