@@ -777,13 +777,7 @@ function canViewChild(user, child) {
         );
     }
 
-    if (user.role === 'teacher') {
-        return (
-            child.groupId !== null &&
-            getTeacherGroupIds(user.employeeId).includes(child.groupId)
-        );
-    }
-
+    // Викладач не має доступу до даних дітей і батьків (README, розділ 2 і 9)
     return false;
 }
 
@@ -1982,11 +1976,11 @@ app.get('/groups/:id', authenticate, validate({ params: idParams('групи') }
     res.status(HTTP_STATUS.OK).json(serializeGroup(group, req.user));
 });
 
-// GET /groups/:id/children - діти групи (без доступу для батьків)
+// GET /groups/:id/children - діти групи (лише admin і manager; батьки й викладачі 403)
 app.get(
     '/groups/:id/children',
     authenticate,
-    requireRole('admin', 'manager', 'teacher'),
+    requireRole('admin', 'manager'),
     validate({ params: idParams('групи') }),
     (req, res) => {
         const { id } = req.valid.params;
@@ -2197,8 +2191,8 @@ app.delete(
 
 // ---------- Діти ----------
 
-// GET /children?groupId=&isActive=
-app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res) => {
+// GET /children?groupId=&isActive= - admin і manager: всі; parent: лише свої; teacher: 403
+app.get('/children', authenticate, requireRole('admin', 'manager', 'parent'), validate({ query: childrenQuery }), (req, res) => {
     const { user } = req;
     const { groupId, isActive } = req.valid.query;
     const where = [];
@@ -2209,17 +2203,6 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
             'c.id IN (SELECT childId FROM child_parents WHERE parentId = ?)',
         );
         params.push(user.parentId);
-    }
-
-    if (user.role === 'teacher') {
-        const ids = getTeacherGroupIds(user.employeeId);
-
-        if (ids.length === 0) {
-            return res.status(HTTP_STATUS.OK).json([]);
-        }
-
-        where.push(`c.groupId IN (${ids.map(() => '?').join(',')})`);
-        params.push(...ids);
     }
 
     if (groupId !== undefined) {
@@ -2241,8 +2224,8 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
     res.status(HTTP_STATUS.OK).json(children.map((child) => serializeChild(child, user)));
 });
 
-// GET /children/:id
-app.get('/children/:id', authenticate, validate({ params: idParams('дитини') }), (req, res) => {
+// GET /children/:id - admin і manager: будь-яка; parent: лише своя; teacher: 403
+app.get('/children/:id', authenticate, requireRole('admin', 'manager', 'parent'), validate({ params: idParams('дитини') }), (req, res) => {
     const { id } = req.valid.params;
 
     const child = db.prepare(`${CHILD_SELECT} WHERE c.id = ?`).get(id);

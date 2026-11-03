@@ -6318,7 +6318,7 @@
                     ]
                 },
                 {
-                    "name": "8.14 teacher1 до генерації розкладу: GET /children -> []",
+                    "name": "8.14 teacher1: GET /children -> 403 (викладач не бачить дітей)",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -6339,9 +6339,8 @@
                             "script": {
                                 "type": "text/javascript",
                                 "exec": [
-                                    "pm.test(\"Статус 200\", () => pm.response.to.have.status(200));",
-                                    "const j = pm.response.json();",
-                                    "pm.test(\"Порожній масив\", () => pm.expect(j).to.eql([]));"
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
+                                    "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
                                 ]
                             }
                         }
@@ -7544,7 +7543,7 @@
                     ]
                 },
                 {
-                    "name": "11.2 teacher1: GET /groups/:id/children -> 12",
+                    "name": "11.2 teacher1: GET /groups/:id/children -> 403",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -7565,16 +7564,15 @@
                             "script": {
                                 "type": "text/javascript",
                                 "exec": [
-                                    "pm.test(\"Статус 200\", () => pm.response.to.have.status(200));",
-                                    "const j = pm.response.json();",
-                                    "pm.test(\"12 активних дітей\", () => pm.expect(j.length).to.equal(12));"
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
+                                    "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
                                 ]
                             }
                         }
                     ]
                 },
                 {
-                    "name": "11.3 teacher1: GET /children -> 12",
+                    "name": "11.3 teacher1: GET /children -> 403",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -7595,16 +7593,15 @@
                             "script": {
                                 "type": "text/javascript",
                                 "exec": [
-                                    "pm.test(\"Статус 200\", () => pm.response.to.have.status(200));",
-                                    "const j = pm.response.json();",
-                                    "pm.test(\"12 дітей своєї групи\", () => pm.expect(j.length).to.equal(12));"
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
+                                    "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
                                 ]
                             }
                         }
                     ]
                 },
                 {
-                    "name": "11.4 teacher1: дитина без групи cY -> 404",
+                    "name": "11.4 teacher1: GET /children/:id (дитина без групи cY) -> 403",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -7625,7 +7622,65 @@
                             "script": {
                                 "type": "text/javascript",
                                 "exec": [
-                                    "pm.test(\"Статус 404\", () => pm.response.to.have.status(404));",
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
+                                    "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "11.4a teacher1: GET /children/:id (дитина його групи) -> 403",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{teacher1Token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/children/{{childId}}",
+                            "host": ["{{baseUrl}}"],
+                            "path": ["children", "{{childId}}"]
+                        }
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
+                                    "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "11.4b teacher1: GET /parents -> 403",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{teacher1Token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/parents",
+                            "host": ["{{baseUrl}}"],
+                            "path": ["parents"]
+                        }
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test(\"Статус 403\", () => pm.response.to.have.status(403));",
                                     "pm.test(\"Формат помилки: { error: string }\", () => { const e = pm.response.json(); pm.expect(e).to.have.property(\"error\"); pm.expect(e.error).to.be.a(\"string\").and.not.empty; });"
                                 ]
                             }
