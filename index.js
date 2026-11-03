@@ -9,6 +9,15 @@ const { z } = require('zod');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Перевіряємо .env до створення бази, щоб без налаштувань сервер не стартував
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    throw new Error(
+        'Set JWT_SECRET (at least 32 characters) in .env. Run "npm run setup" or copy .env.example to .env'
+    );
+}
+
 // Глобальні константи HTTP-статусів
 const HTTP_STATUS = {
     OK: 200,
@@ -306,7 +315,7 @@ function seedDatabase() {
 
             if (!adminPassword || adminPassword.length < 12) {
                 throw new Error(
-                    'Set ADMIN_PASSWORD (at least 12 characters) in .env'
+                    'Set ADMIN_PASSWORD (at least 12 characters) in .env. Run "npm run setup" or copy .env.example to .env'
                 );
             }
 
@@ -414,11 +423,7 @@ function validate(schemas) {
 // 3. АВТОРИЗАЦІЯ ТА МІДЛВАРИ
 // ==========================================
 
-const JWT_SECRET = process.env.JWT_SECRET;
-
-if (!JWT_SECRET || JWT_SECRET.length < 32) {
-    throw new Error('Set JWT_SECRET (at least 32 characters) in .env');
-}
+// JWT_SECRET читається й перевіряється на початку файлу
 
 const LOGIN_REQUIRED = 'Вкажіть логін і пароль';
 
