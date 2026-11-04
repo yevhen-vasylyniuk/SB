@@ -227,13 +227,13 @@
 | `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
 | `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                              |
 | `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                              |
-| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають стан запису у JSON (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Зараз ведеться для `rooms` (тригери `rooms_history_insert`, `rooms_history_update`, `rooms_history_delete`) |
+| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `recordId` текстовий, щоб підходили складені ключі (для `child_parents` формат `'childId:parentId'`); `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають повний стан запису у JSON, включно з `id` (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Зараз ведеться для `rooms` (тригери `rooms_history_insert`, `rooms_history_update`, `rooms_history_delete`) |
 
 Оренда для розрахунку: `SUM(rent)` по таблиці `rooms`. Поки значення не змінювали, вона дорівнює 50 000 × кількість кімнат.
 
 Початкові дані (seed) при першому запуску: користувач `admin`, 5 дисциплін (музика, англійська, фізкультура, вільна боротьба, шахи). Решту даних (діти, групи, викладачі) заводять через API.
 
-Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Щоб вести історію іншої таблиці, достатньо додати три такі самі тригери з її `tableName` і колонками.
+Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Щоб вести історію іншої таблиці, достатньо додати три такі самі тригери з її `tableName` і всіма колонками, а тест за зразком `test/data_history.test.js`.
 
 ## 9. Зведена таблиця ендпойнтів
 
@@ -362,6 +362,7 @@ npm run setup
 | `PORT` | ні (типово `3000`) | порт сервера |
 | `ADMIN_PASSWORD` | так, мінімум 12 символів | пароль користувача `admin`, який створюється при першому запуску |
 | `JWT_SECRET` | так, мінімум 32 символи | секрет для підпису JWT-токенів |
+| `DB_PATH` | ні (типово `kindergarten.db`) | шлях до файлу бази; використовується автотестами |
 
 Згенерувати значення вручну:
 
@@ -424,6 +425,13 @@ npm run db:reset
 3. Створіть батька, групу, дитину, перевірте `GET /children/:id/invoice` і порівняйте суму з таблицею знижок у розділі 4.
 
 Повна перевірка: імпортувати в Postman обидва файли з `postman_test3/`, вписати свій `ADMIN_PASSWORD` у змінну `adminPassword` оточення і запустити колекцію через Collection Runner по порядку, на чистій базі.
+
+### Автотести
+```bash
+npm test
+```
+
+Запускає тести з папки `test/` (вбудований `node:test`, без додаткових пакетів). Кожен тест піднімає сервер на тимчасовій базі через змінну `DB_PATH`, тому локальна `kindergarten.db` і `.env` не змінюються. Зараз покрито історію змін `rooms`: INSERT, UPDATE, DELETE, UPDATE без змін і невдалі операції (409, 400, 404), які не мають залишати записів.
 
 ### Якщо не запускається
 | Повідомлення | Причина і що робити |
