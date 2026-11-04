@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "description": "REST API for private kindergarten",
   "main": "index.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "setup": "node -e \"const fs=require('fs'),c=require('crypto');if(fs.existsSync('.env')){console.log('.env already exists, nothing changed');process.exit(0)}const env=fs.readFileSync('.env.example','utf8').replace(/^ADMIN_PASSWORD=.*$/m,'ADMIN_PASSWORD='+c.randomBytes(18).toString('hex')).replace(/^JWT_SECRET=.*$/m,'JWT_SECRET='+c.randomBytes(32).toString('hex'));fs.writeFileSync('.env',env);console.log('.env created, admin password is in .env')\"",
+    "db:reset": "node -e \"for(const f of ['kindergarten.db','kindergarten.db-wal','kindergarten.db-shm'])require('fs').rmSync(f,{force:true});console.log('Database removed, it will be recreated on next start')\"",
+    "lint": "eslint index.js",
+    "lint:fix": "eslint index.js --fix",
+    "format:check": "prettier --check index.js",
+    "format": "prettier --write index.js"
   },
   "repository": {
     "type": "git",
@@ -27,5 +36,12 @@
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.13.0",
+    "prettier": "3.9.10"
   }
 }

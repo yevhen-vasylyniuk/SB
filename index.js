@@ -9,6 +9,15 @@ const { z } = require('zod');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Перевіряємо .env до створення бази, щоб без налаштувань сервер не стартував
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    throw new Error(
+        'Set JWT_SECRET (at least 32 characters) in .env. Run "npm run setup" or copy .env.example to .env'
+    );
+}
+
 // Глобальні константи HTTP-статусів
 const HTTP_STATUS = {
     OK: 200,
@@ -277,7 +286,7 @@ function initializeDatabase() {
 
 initializeDatabase();
 
-
+// dimadiamdimma
 function seedDatabase() {
     const seed = db.transaction(() => {
         const activities = [
@@ -306,7 +315,7 @@ function seedDatabase() {
 
             if (!adminPassword || adminPassword.length < 12) {
                 throw new Error(
-                    'Set ADMIN_PASSWORD (at least 12 characters) in .env'
+                    'Set ADMIN_PASSWORD (at least 12 characters) in .env. Run "npm run setup" or copy .env.example to .env'
                 );
             }
 
@@ -414,11 +423,7 @@ function validate(schemas) {
 // 3. АВТОРИЗАЦІЯ ТА МІДЛВАРИ
 // ==========================================
 
-const JWT_SECRET = process.env.JWT_SECRET;
-
-if (!JWT_SECRET || JWT_SECRET.length < 32) {
-    throw new Error('Set JWT_SECRET (at least 32 characters) in .env');
-}
+// JWT_SECRET читається й перевіряється на початку файлу
 
 const LOGIN_REQUIRED = 'Вкажіть логін і пароль';
 
@@ -474,7 +479,7 @@ function authenticate(req, res, next) {
 
         req.user = user;
         next();
-    } catch (error) {
+    } catch {
         return res.status(HTTP_STATUS.UNAUTHORIZED).json({
             error: 'Недійсний або прострочений токен'
         });
@@ -548,10 +553,38 @@ const createUserBody = z.discriminatedUnion('role', [
 // ==========================================
 
 
+// Контакти батьків. Порожній рядок і null означають «немає значення»
+// (у маршрутах вони зберігаються як NULL), тому PATCH може очистити поле.
+const PHONE_ERROR = 'Некоректний телефон: допустимі цифри, пробіли, дефіси, дужки й «+» на початку (від 10 до 15 цифр)';
+const EMAIL_ERROR = 'Некоректний email';
+const MIN_PHONE_DIGITS = 10;
+const MAX_PHONE_DIGITS = 15; // обмеження E.164
+const MAX_EMAIL_LENGTH = 254;
+
+function isValidPhone(value) {
+    if (value === '') {
+        return true;
+    }
+
+    if (!/^\+?[\d\s\-()]+$/.test(value)) {
+        return false;
+    }
+
+    const digits = value.replace(/\D/g, '').length;
+
+    return digits >= MIN_PHONE_DIGITS && digits <= MAX_PHONE_DIGITS;
+}
+
+const emailFormat = z.email();
+
+function isValidEmail(value) {
+    return value === '' || (value.length <= MAX_EMAIL_LENGTH && emailFormat.safeParse(value).success);
+}
+
 const parentFields = {
     fullName: requiredText('Вкажіть коректне ПІБ батька'),
-    phone: optionalText('Некоректне поле: phone'),
-    email: optionalText('Некоректне поле: email'),
+    phone: z.string(PHONE_ERROR).trim().refine(isValidPhone, PHONE_ERROR).nullish(),
+    email: z.string(EMAIL_ERROR).trim().refine(isValidEmail, EMAIL_ERROR).nullish(),
     relationNote: optionalText('Некоректне поле: relationNote')
 };
 
@@ -749,13 +782,7 @@ function canViewChild(user, child) {
         );
     }
 
-    if (user.role === 'teacher') {
-        return (
-            child.groupId !== null &&
-            getTeacherGroupIds(user.employeeId).includes(child.groupId)
-        );
-    }
-
+    // Викладач не має доступу до даних дітей і батьків (README, розділ 2 і 9)
     return false;
 }
 
@@ -1954,11 +1981,11 @@ app.get('/groups/:id', authenticate, validate({ params: idParams('групи') }
     res.status(HTTP_STATUS.OK).json(serializeGroup(group, req.user));
 });
 
-// GET /groups/:id/children - діти групи (без доступу для батьків)
+// GET /groups/:id/children - діти групи (лише admin і manager; батьки й викладачі 403)
 app.get(
     '/groups/:id/children',
     authenticate,
-    requireRole('admin', 'manager', 'teacher'),
+    requireRole('admin', 'manager'),
     validate({ params: idParams('групи') }),
     (req, res) => {
         const { id } = req.valid.params;
@@ -2169,8 +2196,8 @@ app.delete(
 
 // ---------- Діти ----------
 
-// GET /children?groupId=&isActive=
-app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res) => {
+// GET /children?groupId=&isActive= - admin і manager: всі; parent: лише свої; teacher: 403
+app.get('/children', authenticate, requireRole('admin', 'manager', 'parent'), validate({ query: childrenQuery }), (req, res) => {
     const { user } = req;
     const { groupId, isActive } = req.valid.query;
     const where = [];
@@ -2181,17 +2208,6 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
             'c.id IN (SELECT childId FROM child_parents WHERE parentId = ?)',
         );
         params.push(user.parentId);
-    }
-
-    if (user.role === 'teacher') {
-        const ids = getTeacherGroupIds(user.employeeId);
-
-        if (ids.length === 0) {
-            return res.status(HTTP_STATUS.OK).json([]);
-        }
-
-        where.push(`c.groupId IN (${ids.map(() => '?').join(',')})`);
-        params.push(...ids);
     }
 
     if (groupId !== undefined) {
@@ -2213,8 +2229,8 @@ app.get('/children', authenticate, validate({ query: childrenQuery }), (req, res
     res.status(HTTP_STATUS.OK).json(children.map((child) => serializeChild(child, user)));
 });
 
-// GET /children/:id
-app.get('/children/:id', authenticate, validate({ params: idParams('дитини') }), (req, res) => {
+// GET /children/:id - admin і manager: будь-яка; parent: лише своя; teacher: 403
+app.get('/children/:id', authenticate, requireRole('admin', 'manager', 'parent'), validate({ params: idParams('дитини') }), (req, res) => {
     const { id } = req.valid.params;
 
     const child = db.prepare(`${CHILD_SELECT} WHERE c.id = ?`).get(id);
@@ -2557,6 +2573,11 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ 
 
 app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ body: createRoomBody }), (req, res) => {
     const { name, type, rent } = req.valid.body;
+    if (req.user.role === 'manager' && Object.hasOwn(req.body, 'rent')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може встановлювати вартість оренди'
+        });
+    }
 
     try {
         const result = db.prepare(`
@@ -2589,6 +2610,12 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ bod
 app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати'), body: updateRoomBody }), (req, res) => {
     const { id } = req.valid.params;
     const body = req.valid.body;
+
+        if (req.user.role === 'manager' && Object.hasOwn(req.body, 'rent')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може змінювати вартість оренди'
+        });
+    }
 
     try {
         const existing = db.prepare(`
@@ -3146,10 +3173,11 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
     try {
         const { id: slotId } = req.valid.params;
 
-        // За ТЗ: спочатку перевіряємо існування (404), тому тіло перевіряємо
-        // схемою тут, після пошуку слоту, а не в middleware validate()
+        // За ТЗ: спочатку 404, тому тіло перевіряємо тут, після пошуку слоту
         const currentSlot = db.prepare('SELECT * FROM schedule_slots WHERE id = ?').get(slotId);
-        if (!currentSlot) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Слот не знайдено' });
+        if (!currentSlot) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Слот не знайдено' });
+        }
 
         const parsedBody = moveSlotBody.safeParse(req.body);
         if (!parsedBody.success) {
@@ -3158,24 +3186,38 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
 
         const { startTime, dayOfWeek } = parsedBody.data;
 
-        // Перевірка: вчитель може міняти тільки свої заняття (403)
+        // Вчитель може міняти тільки свої заняття
         if (req.user.role === 'teacher' && currentSlot.teacherId !== req.user.employeeId) {
             return res.status(HTTP_STATUS.FORBIDDEN).json({ error: 'Ви можете змінювати лише власні заняття.' });
         }
 
-        // Перевірка колізій через функцію Громова
+        // Не більше одного заняття на день для групи (поточний слот виключено через id != ?)
+        const groupDayConflict = db.prepare(`
+            SELECT id FROM schedule_slots
+            WHERE groupId = ? AND dayOfWeek = ? AND id != ?
+            LIMIT 1
+        `).get(currentSlot.groupId, dayOfWeek, slotId);
+
+        if (groupDayConflict) {
+            return res.status(HTTP_STATUS.CONFLICT).json({
+                error: 'Колізія розкладу: цій групі вже призначено інше заняття на обраний день.',
+                type: 'group_limit',
+                slotId: groupDayConflict.id
+            });
+        }
+
+        // Колізії часу: група, викладач, кімната
         const conflict = findScheduleConflict({
             groupId: currentSlot.groupId,
             teacherId: currentSlot.teacherId,
             roomId: currentSlot.roomId,
-            dayOfWeek: dayOfWeek,
-            startTime: startTime,
-            durationMin: 30
+            dayOfWeek,
+            startTime
         }, slotId);
 
         if (conflict) {
             return res.status(HTTP_STATUS.CONFLICT).json({
-                error: 'Колізія розкладу: час вже зайнятий',
+                error: 'Колізія розкладу: час, викладач або кімната вже зайняті',
                 type: conflict.type,
                 slotId: conflict.slotId
             });
@@ -3190,11 +3232,12 @@ app.patch('/schedules/:id', authenticate, requireRole('admin', 'manager', 'teach
         res.status(HTTP_STATUS.OK).json({ message: 'Слот успішно оновлено' });
 
     } catch (error) {
-        // Перехоплення унікальності на рівні БД
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
             return res.status(HTTP_STATUS.CONFLICT).json({ error: 'Колізія розкладу: конфлікт унікальності в базі даних.' });
         }
-        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
+
+        console.error('Failed to update schedule slot:', error);
+        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
 });
 
@@ -3301,7 +3344,7 @@ app.use((req, res) => {
 
 // ---------- 500 - глобальна обробка помилок ----------
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
     console.error('Server error:', err);
 
     // Некоректний JSON у тілі запиту
