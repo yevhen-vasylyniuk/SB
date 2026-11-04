@@ -227,10 +227,13 @@
 | `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
 | `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                              |
 | `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                              |
+| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають стан запису у JSON (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Зараз ведеться для `rooms` (тригери `rooms_history_insert`, `rooms_history_update`, `rooms_history_delete`) |
 
 Оренда для розрахунку: `SUM(rent)` по таблиці `rooms`. Поки значення не змінювали, вона дорівнює 50 000 × кількість кімнат.
 
 Початкові дані (seed) при першому запуску: користувач `admin`, 5 дисциплін (музика, англійська, фізкультура, вільна боротьба, шахи). Решту даних (діти, групи, викладачі) заводять через API.
+
+Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Щоб вести історію іншої таблиці, достатньо додати три такі самі тригери з її `tableName` і колонками.
 
 ## 9. Зведена таблиця ендпойнтів
 
@@ -397,7 +400,7 @@ Server running at http://localhost:3000
 
 ### Що створюється при першому запуску
 - Файл бази `kindergarten.db` (разом з `kindergarten.db-wal` і `kindergarten.db-shm`, бо увімкнено режим WAL).
-- Дев'ять таблиць, тригери місткості груп, `foreign_keys = ON`.
+- Десять таблиць (включно з `data_history`), тригери місткості груп і тригери історії змін `rooms`, `foreign_keys = ON`.
 - Початкові дані (seed):
   - користувач `admin` з паролем з `ADMIN_PASSWORD` (у базі зберігається лише bcrypt-хеш);
   - п'ять дисциплін: Музика, Англійська, Фізкультура, Вільна боротьба, Шахи.
