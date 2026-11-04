@@ -2573,6 +2573,11 @@ app.get('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ 
 
 app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ body: createRoomBody }), (req, res) => {
     const { name, type, rent } = req.valid.body;
+    if (req.user.role === 'manager' && Object.hasOwn(req.body, 'rent')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може встановлювати вартість оренди'
+        });
+    }
 
     try {
         const result = db.prepare(`
@@ -2605,6 +2610,12 @@ app.post('/rooms', authenticate, requireRole('admin', 'manager'), validate({ bod
 app.patch('/rooms/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('кімнати'), body: updateRoomBody }), (req, res) => {
     const { id } = req.valid.params;
     const body = req.valid.body;
+
+        if (req.user.role === 'manager' && Object.hasOwn(req.body, 'rent')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може змінювати вартість оренди'
+        });
+    }
 
     try {
         const existing = db.prepare(`
