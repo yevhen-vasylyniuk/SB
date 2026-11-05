@@ -7,7 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "start": "node index.js",
     "dev": "node --watch index.js",
     "setup": "node -e \"const fs=require('fs'),c=require('crypto');if(fs.existsSync('.env')){console.log('.env already exists, nothing changed');process.exit(0)}const env=fs.readFileSync('.env.example','utf8').replace(/^ADMIN_PASSWORD=.*$/m,'ADMIN_PASSWORD='+c.randomBytes(18).toString('hex')).replace(/^JWT_SECRET=.*$/m,'JWT_SECRET='+c.randomBytes(32).toString('hex'));fs.writeFileSync('.env',env);console.log('.env created, admin password is in .env')\"",

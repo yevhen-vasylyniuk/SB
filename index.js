@@ -58,7 +58,8 @@ app.use(express.json());
 // ==========================================
 
 
-const db = new Database('kindergarten.db');
+// DB_PATH дозволяє запускати автотести на окремій тимчасовій базі
+const db = new Database(process.env.DB_PATH || 'kindergarten.db');
 
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
@@ -278,6 +279,60 @@ function initializeDatabase() {
                        ABORT,
                        'Group capacity below current enrollment'
                );
+        END;
+    `);
+
+    // Історія змін даних: тригери пишуть сюди повний старий і новий стан запису у JSON.
+    // Таблиця спільна: для інших таблиць додаються такі самі тригери зі своїм tableName.
+    // recordId текстовий, щоб підходили й складені ключі: для child_parents це 'childId:parentId'.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS data_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tableName TEXT NOT NULL,
+            recordId TEXT NOT NULL,
+            action TEXT NOT NULL
+                CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+            oldData TEXT,
+            newData TEXT,
+            changedAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_data_history_record
+            ON data_history (tableName, recordId);
+
+        CREATE TRIGGER IF NOT EXISTS rooms_history_insert
+        AFTER INSERT ON rooms
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'rooms', CAST(NEW.id AS TEXT), 'INSERT',
+                json_object('id', NEW.id, 'name', NEW.name, 'type', NEW.type, 'rent', NEW.rent)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS rooms_history_update
+        AFTER UPDATE ON rooms
+            WHEN OLD.id IS NOT NEW.id
+            OR OLD.name IS NOT NEW.name
+            OR OLD.type IS NOT NEW.type
+            OR OLD.rent IS NOT NEW.rent
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'rooms', CAST(NEW.id AS TEXT), 'UPDATE',
+                json_object('id', OLD.id, 'name', OLD.name, 'type', OLD.type, 'rent', OLD.rent),
+                json_object('id', NEW.id, 'name', NEW.name, 'type', NEW.type, 'rent', NEW.rent)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS rooms_history_delete
+        AFTER DELETE ON rooms
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'rooms', CAST(OLD.id AS TEXT), 'DELETE',
+                json_object('id', OLD.id, 'name', OLD.name, 'type', OLD.type, 'rent', OLD.rent)
+            );
         END;
     `);
 
