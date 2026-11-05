@@ -336,6 +336,87 @@ function initializeDatabase() {
         END;
     `);
 
+    db.exec(`
+        -- ==========================================
+        -- Історія змін для таблиці children
+        -- ==========================================
+        CREATE TRIGGER IF NOT EXISTS children_history_insert
+        AFTER INSERT ON children
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'children', CAST(NEW.id AS TEXT), 'INSERT',
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'birthDate', NEW.birthDate, 'parentId', NEW.parentId, 'groupId', NEW.groupId, 'discountPercent', NEW.discountPercent, 'paymentPlan', NEW.paymentPlan, 'notes', NEW.notes, 'isActive', NEW.isActive)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS children_history_update
+        AFTER UPDATE ON children
+            WHEN OLD.id IS NOT NEW.id
+            OR OLD.fullName IS NOT NEW.fullName
+            OR OLD.birthDate IS NOT NEW.birthDate
+            OR OLD.parentId IS NOT NEW.parentId
+            OR OLD.groupId IS NOT NEW.groupId
+            OR OLD.discountPercent IS NOT NEW.discountPercent
+            OR OLD.paymentPlan IS NOT NEW.paymentPlan
+            OR OLD.notes IS NOT NEW.notes
+            OR OLD.isActive IS NOT NEW.isActive
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'children', CAST(NEW.id AS TEXT), 'UPDATE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'birthDate', OLD.birthDate, 'parentId', OLD.parentId, 'groupId', OLD.groupId, 'discountPercent', OLD.discountPercent, 'paymentPlan', OLD.paymentPlan, 'notes', OLD.notes, 'isActive', OLD.isActive),
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'birthDate', NEW.birthDate, 'parentId', NEW.parentId, 'groupId', NEW.groupId, 'discountPercent', NEW.discountPercent, 'paymentPlan', NEW.paymentPlan, 'notes', NEW.notes, 'isActive', NEW.isActive)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS children_history_delete
+        AFTER DELETE ON children
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'children', CAST(OLD.id AS TEXT), 'DELETE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'birthDate', OLD.birthDate, 'parentId', OLD.parentId, 'groupId', OLD.groupId, 'discountPercent', OLD.discountPercent, 'paymentPlan', OLD.paymentPlan, 'notes', OLD.notes, 'isActive', OLD.isActive)
+            );
+        END;
+
+        -- ==========================================
+        -- Історія змін для таблиці child_parents (складений ключ)
+        -- ==========================================
+        CREATE TRIGGER IF NOT EXISTS child_parents_history_insert
+        AFTER INSERT ON child_parents
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'child_parents', CAST(NEW.childId AS TEXT) || ':' || CAST(NEW.parentId AS TEXT), 'INSERT',
+                json_object('childId', NEW.childId, 'parentId', NEW.parentId)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS child_parents_history_update
+        AFTER UPDATE ON child_parents
+            WHEN OLD.childId IS NOT NEW.childId
+            OR OLD.parentId IS NOT NEW.parentId
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'child_parents', CAST(NEW.childId AS TEXT) || ':' || CAST(NEW.parentId AS TEXT), 'UPDATE',
+                json_object('childId', OLD.childId, 'parentId', OLD.parentId),
+                json_object('childId', NEW.childId, 'parentId', NEW.parentId)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS child_parents_history_delete
+        AFTER DELETE ON child_parents
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'child_parents', CAST(OLD.childId AS TEXT) || ':' || CAST(OLD.parentId AS TEXT), 'DELETE',
+                json_object('childId', OLD.childId, 'parentId', OLD.parentId)
+            );
+        END;
+    `);
+
     console.log('SQLite tables initialized');
 }
 
