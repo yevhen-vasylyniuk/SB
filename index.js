@@ -3726,6 +3726,127 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query:
 });
 
 
+// ---------- Історія змін бази даних ----------
+// Тільки читання: створення записів історії виконують SQLite-тригери.
+// Доступ до історії поки має лише admin (право узгодити з BA).
+
+const HISTORY_TABLES = [
+    'users', 'parents', 'employees', 'rooms', 'groups',
+    'children', 'child_parents', 'activities', 'schedule_slots'
+];
+
+// Числові query-параметри: limit від 1 до 100, offset від 0.
+const historyQueryInt = (min, max, message) => z.string(message)
+    .regex(/^(0|[1-9]\d*)$/, message)
+    .transform(Number)
+    .refine((value) => Number.isSafeInteger(value) && value >= min && value <= max, message);
+
+const historyQuery = z.object({
+    tableName: z.enum(HISTORY_TABLES, 'Некоректна назва таблиці').optional(),
+    recordId: z.string('Некоректний recordId').trim().min(1, 'Некоректний recordId')
+        .max(100, 'Некоректний recordId').optional(),
+    action: z.enum(['INSERT', 'UPDATE', 'DELETE'], 'Некоректний тип дії').optional(),
+    limit: historyQueryInt(1, 100, 'limit має бути цілим числом від 1 до 100').default(50),
+    offset: historyQueryInt(0, Number.MAX_SAFE_INTEGER, 'offset має бути невід’ємним цілим числом').default(0)
+});
+
+function serializeHistory(row) {
+    const parseData = (json) => {
+        if (json === null) return null;
+
+        const data = JSON.parse(json);
+        if (row.tableName !== 'users') {
+            return data;
+        }
+
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            return null;
+        }
+
+        // Захист на випадок, якщо тригер users помилково збереже конфіденційні поля.
+        // Для users повертаємо лише явно дозволені поля, жодних паролів або хешів.
+        const { id, login, role, parentId, employeeId } = data;
+        return Object.fromEntries(
+            Object.entries({ id, login, role, parentId, employeeId })
+                .filter(([, value]) => value !== undefined)
+        );
+    };
+
+    return {
+        ...row,
+        oldData: parseData(row.oldData),
+        newData: parseData(row.newData)
+    };
+}
+
+// Явна обробка невалідного JSON, який може залишитися в старих записах історії.
+// Не повертаємо пошкоджений вміст і не розкриваємо внутрішні деталі помилки.
+function sendHistoryJson(res, data) {
+    try {
+        const result = Array.isArray(data)
+            ? data.map(serializeHistory)
+            : serializeHistory(data);
+        return res.status(HTTP_STATUS.OK).json(result);
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            console.error('Invalid JSON in data_history:', error.message);
+            return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+                error: 'Пошкоджені дані історії'
+            });
+        }
+        throw error;
+    }
+}
+
+// GET /history?tableName=rooms&recordId=1&action=UPDATE&limit=50&offset=0
+app.get('/history', authenticate, requireRole('admin'), validate({ query: historyQuery }), (req, res) => {
+    const { tableName, recordId, action, limit, offset } = req.valid.query;
+    const filters = [];
+    const values = [];
+
+    if (tableName !== undefined) {
+        filters.push('tableName = ?');
+        values.push(tableName);
+    }
+
+    if (recordId !== undefined) {
+        filters.push('recordId = ?');
+        values.push(recordId);
+    }
+
+    if (action !== undefined) {
+        filters.push('action = ?');
+        values.push(action);
+    }
+
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const rows = db.prepare(`
+        SELECT id, tableName, recordId, action, oldData, newData, changedAt
+        FROM data_history
+        ${where}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+    `).all(...values, limit, offset);
+
+    return sendHistoryJson(res, rows);
+});
+
+// GET /history/1 — одна подія історії за її ID.
+app.get('/history/:id', authenticate, requireRole('admin'),
+    validate({ params: idParams('запису історії') }), (req, res) => {
+        const row = db.prepare(`
+            SELECT id, tableName, recordId, action, oldData, newData, changedAt
+            FROM data_history WHERE id = ?
+        `).get(req.valid.params.id);
+
+        if (!row) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Запис історії не знайдено' });
+        }
+
+        return sendHistoryJson(res, row);
+    });
+
+
 // ---------- Перевірка роботи API ----------
 
 app.get(['/health', '/api/health'], (req, res) => {
