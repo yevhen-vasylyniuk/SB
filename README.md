@@ -227,13 +227,13 @@
 | `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
 | `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                              |
 | `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                              |
-| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `recordId` текстовий, щоб підходили складені ключі (для `child_parents` формат `'childId:parentId'`); `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають повний стан запису у JSON, включно з `id` (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Ведеться для `rooms`, `children` та `child_parents` (тригери `*_history_insert`, `*_history_update`, `*_history_delete`) |
+| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `recordId` текстовий, щоб підходили складені ключі (для `child_parents` формат `'childId:parentId'`); `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають повний стан запису у JSON, включно з `id` (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Ведеться для `rooms`, `children`, `child_parents`, `activities` та `schedule_slots` (тригери `*_history_insert`, `*_history_update`, `*_history_delete`) |
 
 Оренда для розрахунку: `SUM(rent)` по таблиці `rooms`. Поки значення не змінювали, вона дорівнює 50 000 × кількість кімнат.
 
 Початкові дані (seed) при першому запуску: користувач `admin`, 5 дисциплін (музика, англійська, фізкультура, вільна боротьба, шахи). Решту даних (діти, групи, викладачі) заводять через API.
 
-Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Наразі тригери реалізовано для `rooms`, `children` та `child_parents`. Автотести знаходяться в папці `test/`.
+Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Наразі тригери реалізовано для `rooms`, `children`, `child_parents`, `activities` та `schedule_slots`. Початкові дисципліни з seed теж потрапляють в історію як `INSERT`, а повторна генерація розкладу записує `DELETE` для старих слотів і `INSERT` для нових. Автотести знаходяться в папці `test/`.
 
 ## 9. Зведена таблиця ендпойнтів
 
@@ -401,7 +401,7 @@ Server running at http://localhost:3000
 
 ### Що створюється при першому запуску
 - Файл бази `kindergarten.db` (разом з `kindergarten.db-wal` і `kindergarten.db-shm`, бо увімкнено режим WAL).
-- Десять таблиць (включно з `data_history`), тригери місткості груп і тригери історії змін `rooms`, `children` та `child_parents`, `foreign_keys = ON`.
+- Десять таблиць (включно з `data_history`), тригери місткості груп і тригери історії змін `rooms`, `children`, `child_parents`, `activities` та `schedule_slots`, `foreign_keys = ON`.
 - Початкові дані (seed):
   - користувач `admin` з паролем з `ADMIN_PASSWORD` (у базі зберігається лише bcrypt-хеш);
   - п'ять дисциплін: Музика, Англійська, Фізкультура, Вільна боротьба, Шахи.
@@ -431,7 +431,7 @@ npm run db:reset
 npm test
 ```
 
-Запускає тести з папки `test/` (вбудований `node:test`, без додаткових пакетів). Кожен тест піднімає сервер на тимчасовій базі через змінну `DB_PATH`, тому локальна `kindergarten.db` і `.env` не змінюються. Зараз покрито історію змін `rooms`, `children` та `child_parents`: INSERT, UPDATE, DELETE, UPDATE без змін і невдалі операції (409, 400, 404), які не мають залишати записів.
+Запускає тести з папки `test/` (вбудований `node:test`, без додаткових пакетів). Кожен тест піднімає сервер на тимчасовій базі через змінну `DB_PATH`, тому локальна `kindergarten.db` і `.env` не змінюються. Зараз покрито історію змін `rooms`, `children`, `child_parents`, `activities` та `schedule_slots`: INSERT, UPDATE, DELETE, UPDATE без змін і невдалі операції (409, 400, 404), які не мають залишати записів.
 
 ### Якщо не запускається
 | Повідомлення | Причина і що робити |
