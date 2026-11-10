@@ -130,11 +130,16 @@ before(async () => {
     token = login.body.token;
 });
 
-after(() => {
+after(async () => {
     db?.close();
     server?.removeAllListeners('exit');
-    server?.kill();
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (server && server.exitCode === null && server.signalCode === null) {
+        await new Promise((resolve) => {
+            server.once('close', resolve);
+            server.kill();
+        });
+    }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 test('parents: INSERT, UPDATE і DELETE записуються повним станом, UPDATE без змін ні', async () => {

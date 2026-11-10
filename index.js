@@ -3699,6 +3699,25 @@ function serializeHistory(row) {
     };
 }
 
+// Явна обробка невалідного JSON, який може залишитися в старих записах історії.
+// Не повертаємо пошкоджений вміст і не розкриваємо внутрішні деталі помилки.
+function sendHistoryJson(res, data) {
+    try {
+        const result = Array.isArray(data)
+            ? data.map(serializeHistory)
+            : serializeHistory(data);
+        return res.status(HTTP_STATUS.OK).json(result);
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            console.error('Invalid JSON in data_history:', error.message);
+            return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+                error: 'Пошкоджені дані історії'
+            });
+        }
+        throw error;
+    }
+}
+
 // GET /history?tableName=rooms&recordId=1&action=UPDATE&limit=50&offset=0
 app.get('/history', authenticate, requireRole('admin'), validate({ query: historyQuery }), (req, res) => {
     const { tableName, recordId, action, limit, offset } = req.valid.query;
@@ -3729,7 +3748,7 @@ app.get('/history', authenticate, requireRole('admin'), validate({ query: histor
         LIMIT ? OFFSET ?
     `).all(...values, limit, offset);
 
-    return res.status(HTTP_STATUS.OK).json(rows.map(serializeHistory));
+    return sendHistoryJson(res, rows);
 });
 
 // GET /history/1 — одна подія історії за її ID.
@@ -3744,7 +3763,7 @@ app.get('/history/:id', authenticate, requireRole('admin'),
             return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Запис історії не знайдено' });
         }
 
-        return res.status(HTTP_STATUS.OK).json(serializeHistory(row));
+        return sendHistoryJson(res, row);
     });
 
 
