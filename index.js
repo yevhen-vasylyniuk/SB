@@ -419,6 +419,126 @@ function initializeDatabase() {
 
     db.exec(`
         -- ==========================================
+        -- Історія змін для таблиці parents
+        -- ==========================================
+        CREATE TRIGGER IF NOT EXISTS parents_history_insert
+        AFTER INSERT ON parents
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'parents', CAST(NEW.id AS TEXT), 'INSERT',
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'phone', NEW.phone, 'email', NEW.email, 'relationNote', NEW.relationNote)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS parents_history_update
+        AFTER UPDATE ON parents
+            WHEN OLD.id IS NOT NEW.id
+            OR OLD.fullName IS NOT NEW.fullName
+            OR OLD.phone IS NOT NEW.phone
+            OR OLD.email IS NOT NEW.email
+            OR OLD.relationNote IS NOT NEW.relationNote
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'parents', CAST(NEW.id AS TEXT), 'UPDATE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'phone', OLD.phone, 'email', OLD.email, 'relationNote', OLD.relationNote),
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'phone', NEW.phone, 'email', NEW.email, 'relationNote', NEW.relationNote)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS parents_history_delete
+        AFTER DELETE ON parents
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'parents', CAST(OLD.id AS TEXT), 'DELETE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'phone', OLD.phone, 'email', OLD.email, 'relationNote', OLD.relationNote)
+            );
+        END;
+
+        -- ==========================================
+        -- Історія змін для таблиці employees
+        -- ==========================================
+        CREATE TRIGGER IF NOT EXISTS employees_history_insert
+        AFTER INSERT ON employees
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'employees', CAST(NEW.id AS TEXT), 'INSERT',
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'position', NEW.position, 'salaryRate', NEW.salaryRate)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS employees_history_update
+        AFTER UPDATE ON employees
+            WHEN OLD.id IS NOT NEW.id
+            OR OLD.fullName IS NOT NEW.fullName
+            OR OLD.position IS NOT NEW.position
+            OR OLD.salaryRate IS NOT NEW.salaryRate
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'employees', CAST(NEW.id AS TEXT), 'UPDATE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'position', OLD.position, 'salaryRate', OLD.salaryRate),
+                json_object('id', NEW.id, 'fullName', NEW.fullName, 'position', NEW.position, 'salaryRate', NEW.salaryRate)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS employees_history_delete
+        AFTER DELETE ON employees
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'employees', CAST(OLD.id AS TEXT), 'DELETE',
+                json_object('id', OLD.id, 'fullName', OLD.fullName, 'position', OLD.position, 'salaryRate', OLD.salaryRate)
+            );
+        END;
+
+        -- ==========================================
+        -- Історія змін для таблиці groups
+        -- ==========================================
+        CREATE TRIGGER IF NOT EXISTS groups_history_insert
+        AFTER INSERT ON groups
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, newData)
+            VALUES (
+                'groups', CAST(NEW.id AS TEXT), 'INSERT',
+                json_object('id', NEW.id, 'name', NEW.name, 'ageCategory', NEW.ageCategory, 'capacity', NEW.capacity, 'roomId', NEW.roomId, 'educatorId', NEW.educatorId, 'assistantId', NEW.assistantId)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS groups_history_update
+        AFTER UPDATE ON groups
+            WHEN OLD.id IS NOT NEW.id
+            OR OLD.name IS NOT NEW.name
+            OR OLD.ageCategory IS NOT NEW.ageCategory
+            OR OLD.capacity IS NOT NEW.capacity
+            OR OLD.roomId IS NOT NEW.roomId
+            OR OLD.educatorId IS NOT NEW.educatorId
+            OR OLD.assistantId IS NOT NEW.assistantId
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData, newData)
+            VALUES (
+                'groups', CAST(NEW.id AS TEXT), 'UPDATE',
+                json_object('id', OLD.id, 'name', OLD.name, 'ageCategory', OLD.ageCategory, 'capacity', OLD.capacity, 'roomId', OLD.roomId, 'educatorId', OLD.educatorId, 'assistantId', OLD.assistantId),
+                json_object('id', NEW.id, 'name', NEW.name, 'ageCategory', NEW.ageCategory, 'capacity', NEW.capacity, 'roomId', NEW.roomId, 'educatorId', NEW.educatorId, 'assistantId', NEW.assistantId)
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS groups_history_delete
+        AFTER DELETE ON groups
+        BEGIN
+            INSERT INTO data_history (tableName, recordId, action, oldData)
+            VALUES (
+                'groups', CAST(OLD.id AS TEXT), 'DELETE',
+                json_object('id', OLD.id, 'name', OLD.name, 'ageCategory', OLD.ageCategory, 'capacity', OLD.capacity, 'roomId', OLD.roomId, 'educatorId', OLD.educatorId, 'assistantId', OLD.assistantId)
+            );
+        END;
+    `);
+
+    db.exec(`
+        -- ==========================================
         -- Історія змін для таблиці activities
         -- ==========================================
         CREATE TRIGGER IF NOT EXISTS activities_history_insert
