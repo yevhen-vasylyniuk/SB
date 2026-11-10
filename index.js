@@ -619,6 +619,86 @@ function initializeDatabase() {
         END;
     `);
 
+    db.exec(`
+        -- ==========================================
+        -- Історія змін таблиці users
+        -- passwordHash ніколи не зберігаємо
+        -- ==========================================
+
+        CREATE TRIGGER IF NOT EXISTS users_history_insert
+        AFTER INSERT ON users
+        BEGIN
+            INSERT INTO data_history (
+                tableName, recordId, action, newData
+            )
+            VALUES (
+                'users',
+                CAST(NEW.id AS TEXT),
+                'INSERT',
+                json_object(
+                    'id', NEW.id,
+                    'login', NEW.login,
+                    'role', NEW.role,
+                    'parentId', NEW.parentId,
+                    'employeeId', NEW.employeeId
+                )
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS users_history_update
+        AFTER UPDATE ON users
+        WHEN OLD.id IS NOT NEW.id
+            OR OLD.login IS NOT NEW.login
+            OR OLD.passwordHash IS NOT NEW.passwordHash
+            OR OLD.role IS NOT NEW.role
+            OR OLD.parentId IS NOT NEW.parentId
+            OR OLD.employeeId IS NOT NEW.employeeId
+        BEGIN
+            INSERT INTO data_history (
+                tableName, recordId, action, oldData, newData
+            )
+            VALUES (
+                'users',
+                CAST(NEW.id AS TEXT),
+                'UPDATE',
+                json_object(
+                    'id', OLD.id,
+                    'login', OLD.login,
+                    'role', OLD.role,
+                    'parentId', OLD.parentId,
+                    'employeeId', OLD.employeeId
+                ),
+                json_object(
+                    'id', NEW.id,
+                    'login', NEW.login,
+                    'role', NEW.role,
+                    'parentId', NEW.parentId,
+                    'employeeId', NEW.employeeId
+                )
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS users_history_delete
+        AFTER DELETE ON users
+        BEGIN
+            INSERT INTO data_history (
+                tableName, recordId, action, oldData
+            )
+            VALUES (
+                'users',
+                CAST(OLD.id AS TEXT),
+                'DELETE',
+                json_object(
+                    'id', OLD.id,
+                    'login', OLD.login,
+                    'role', OLD.role,
+                    'parentId', OLD.parentId,
+                    'employeeId', OLD.employeeId
+                )
+            );
+        END;
+    `);
+
     console.log('SQLite tables initialized');
 }
 
