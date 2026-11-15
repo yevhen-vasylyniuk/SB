@@ -1549,6 +1549,11 @@ const activityBodyOptions = {
 const createActivityBody = strictBody(activityFields, activityBodyOptions);
 const updateActivityBody = patchBody(activityFields, activityBodyOptions);
 
+// Пошук і операції за назвою (id-маршрути лишаються): точна назва в шляху
+// /activities/by-name/:name та необов'язковий пошук ?name= (частина назви).
+const activityNameParams = z.object({ name: requiredText('Некоректна назва дисципліни') });
+const activitiesQuery = z.object({ name: requiredText('Некоректна назва для пошуку').optional() });
+
 
 function findScheduleConflict(slot, ignoreId = null) {
     const { groupId, teacherId, roomId, dayOfWeek, startTime } = slot;
@@ -3161,13 +3166,24 @@ app.delete('/rooms/:id', authenticate, requireRole('admin'), validate({ params: 
 
 // ---------- Дисципліни ----------
 
-app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res) => {
+// GET /activities?name=муз - пошук за частиною назви без урахування регістру (порожній
+// результат це 200 і []); без name повертає всі дисципліни. Фільтр у JS, бо LIKE
+// в SQLite не розрізняє регістр лише для латиниці.
+app.get('/activities', authenticate, requireRole('admin', 'manager'), validate({ query: activitiesQuery }), (req, res) => {
+    const { name } = req.valid.query;
+
     try {
-        const activities = db.prepare(`
+        let activities = db.prepare(`
             SELECT id, name, teacherId, roomId
             FROM activities
             ORDER BY id ASC
         `).all();
+
+        if (name !== undefined) {
+            const needle = name.toLocaleLowerCase('uk');
+
+            activities = activities.filter((activity) => activity.name.toLocaleLowerCase('uk').includes(needle));
+        }
 
         return res.status(HTTP_STATUS.OK).json(activities);
 
@@ -3180,7 +3196,20 @@ app.get('/activities', authenticate, requireRole('admin', 'manager'), (req, res)
     }
 });
 
-app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни') }), (req, res) => {
+// Підставляє id дисципліни за точною назвою для маршрутів /activities/by-name/:name;
+// такої назви немає: 404. Далі працюють ті самі обробники, що й для id.
+function findActivityByName(req, res, next) {
+    const activity = db.prepare('SELECT id FROM activities WHERE name = ?').get(req.valid.params.name);
+
+    if (!activity) {
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Дисципліну не знайдено' });
+    }
+
+    req.valid.params = { id: activity.id };
+    next();
+}
+
+function getActivity(req, res) {
     const { id } = req.valid.params;
 
     try {
@@ -3205,7 +3234,10 @@ app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), valida
             error: 'Внутрішня помилка сервера'
         });
     }
-});
+}
+
+app.get('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни') }), getActivity);
+app.get('/activities/by-name/:name', authenticate, requireRole('admin', 'manager'), validate({ params: activityNameParams }), findActivityByName, getActivity);
 
 app.post('/activities', authenticate, requireRole('admin', 'manager'), validate({ body: createActivityBody }), (req, res) => {
     const { name, teacherId = null, roomId = null } = req.valid.body;
@@ -3285,7 +3317,7 @@ app.post('/activities', authenticate, requireRole('admin', 'manager'), validate(
     }
 });
 
-app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни'), body: updateActivityBody }), (req, res) => {
+function updateActivity(req, res) {
     const { id } = req.valid.params;
     const body = req.valid.body;
 
@@ -3374,9 +3406,12 @@ app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), vali
         console.error('Failed to update activity:', error);
         return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
-});
+}
 
-app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ params: idParams('дисципліни') }), (req, res) => {
+app.patch('/activities/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('дисципліни'), body: updateActivityBody }), updateActivity);
+app.patch('/activities/by-name/:name', authenticate, requireRole('admin', 'manager'), validate({ params: activityNameParams, body: updateActivityBody }), findActivityByName, updateActivity);
+
+function deleteActivity(req, res) {
     const { id } = req.valid.params;
 
     try {
@@ -3416,7 +3451,10 @@ app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ par
         console.error('Failed to delete activity:', error);
         return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Внутрішня помилка сервера' });
     }
-});
+}
+
+app.delete('/activities/:id', authenticate, requireRole('admin'), validate({ params: idParams('дисципліни') }), deleteActivity);
+app.delete('/activities/by-name/:name', authenticate, requireRole('admin'), validate({ params: activityNameParams }), findActivityByName, deleteActivity);
 
 
 // ---------- Рахунки ----------

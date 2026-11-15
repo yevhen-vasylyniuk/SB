@@ -251,6 +251,7 @@
 | `PATCH /children/:id` | Змінити дані, пільгу, план, `isActive`, групу | A, M; P лише `notes` своєї | 200, 400, 403, 404, 409 |
 | `DELETE /children/:id` | Видалити дитину | A | 204, 403, 404 |
 | `/parents`, `/rooms`, `/employees`, `/activities` | Стандартний CRUD (`GET`, `POST`, `PATCH`, `DELETE`) | A, M; `DELETE` лише A | 200, 201, 204, 400, 403, 404, 409 |
+| `GET /activities?name=`, `GET`/`PATCH`/`DELETE /activities/by-name/:name` | Пошук за частиною назви та операції з дисципліною за точною назвою (маршрути за `id` лишаються); `DELETE` лише A | A, M | 200, 204, 400, 403, 404, 409 |
 | `/groups` | Стандартний CRUD з перевірками віку, місткості, ліміту груп | A, M; `DELETE` лише A | 200, 201, 204, 400, 403, 404, 409 |
 | `GET /groups/:id/children` | Список дітей у групі | A, M | 200, 401, 403, 404 |
 | `GET /children/:id/invoice` | Рахунок на льоту | A, M; P лише основний представник дитини (`parentId`) | 200, 403, 404, 409 |
