@@ -704,7 +704,6 @@ function initializeDatabase() {
 
 initializeDatabase();
 
-// dimadiamdimma
 function seedDatabase() {
     const seed = db.transaction(() => {
         const activities = [
@@ -1686,7 +1685,7 @@ function calcAssistantSalary(kidsCount) {
 // ==========================================
 
 function generateScheduleLogic() {
-    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC').all();
+    const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC, id').all();
     const activities = db.prepare('SELECT * FROM activities ORDER BY id ASC LIMIT 5').all();
 
     if (activities.length < 5) {
@@ -3582,7 +3581,6 @@ app.get('/teachers/:id/schedule', authenticate, validate({ params: idParams('в�
         ORDER BY s.dayOfWeek, s.startTime
     `).all(teacherId);
 
-    if (!schedule.length) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Розклад не знайдено' });
     res.status(HTTP_STATUS.OK).json(schedule);
 });
 
