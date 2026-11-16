@@ -129,6 +129,26 @@ test('мінімум кабінетів: 6 груп дають 1 кабінет,
     }
 });
 
+test('мінімум кабінетів як у генераторі: 11-12 груп дають 3, 16-24 групи дають 5 (не ceil(груп / 6))', async () => {
+    // Дисципліна закріплена за залом, а за формулою (i + d) mod 5 занять кожної дисципліни
+    // щодня різна кількість, тому навантаження не завжди вдається розкласти рівно по 6
+    const cases = [
+        { children: 200, groups: 10, minSpecializedRooms: 2 },
+        { children: 220, groups: 11, minSpecializedRooms: 3 },
+        { children: 240, groups: 12, minSpecializedRooms: 3 },
+        { children: 260, groups: 13, minSpecializedRooms: 3 },
+        { children: 320, groups: 16, minSpecializedRooms: 5 },
+        { children: 480, groups: 24, minSpecializedRooms: 5 },
+    ];
+
+    for (const { children, groups, minSpecializedRooms } of cases) {
+        const result = await forecast({ children, groupSize: 20 });
+        assert.equal(result.groups.count, groups, `children=${children}`);
+        assert.equal(result.optimization.minSpecializedRooms, minSpecializedRooms, `children=${children}`);
+        assert.equal(result.optimization.minTotalRooms, groups + minSpecializedRooms, `children=${children}`);
+    }
+});
+
 test('окупна кількість кімнат: 3 повні групи по 20 і 1 кабінет, прибуток 96 000', async () => {
     const result = await forecast({ children: 150, age: 5, groupSize: 20 });
 
