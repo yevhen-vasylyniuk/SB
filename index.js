@@ -1689,11 +1689,80 @@ function calcAssistantSalary(kidsCount) {
 // 8. РОЗКЛАД
 // ==========================================
 
+// Сітка занять: 6 слотів по 30 хв, останнє заняття починається о 12:00 (до обіду 12:30)
+const SCHEDULE_SLOT_TIMES = ['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
+const SCHEDULE_DAY_NAMES = ['понеділок', 'вівторок', 'середа', 'четвер', 'пʼятниця'];
+const SCHEDULE_ACTIVITIES_COUNT = 5;
+const LESSON_DURATION_MIN = 30;
+
+// Чиста функція: розставляє заняття на тиждень без запису в БД.
+// groups — від старших до молодших, activities — 5 дисциплін за id.
+// Предмет групи i у день d: activities[(i + d) mod 5] (README, розділ 5).
+// Кожне заняття стає в найперший слот від 09:30, де вільні група, викладач і зал.
+// Якщо в кожної дисципліни свій зал і викладач, групи з однаковим предметом
+// йдуть підряд від 09:30, як у ТЗ; якщо зал спільний, заняття в ньому йдуть одне за одним.
+// Повертає { slots } або { error } з поясненням, чого не вистачило.
+function buildWeeklySchedule(groups, activities) {
+    const slots = [];
+
+    for (let d = 0; d < SCHEDULE_DAY_NAMES.length; d++) {
+        const busyRooms = new Set();
+        const busyTeachers = new Set();
+
+        for (let i = 0; i < groups.length; i++) {
+            const group = groups[i];
+            const activity = activities[(i + d) % SCHEDULE_ACTIVITIES_COUNT];
+
+            const slotIndex = SCHEDULE_SLOT_TIMES.findIndex((_, s) =>
+                !busyRooms.has(`${activity.roomId}:${s}`) && !busyTeachers.has(`${activity.teacherId}:${s}`)
+            );
+
+            if (slotIndex === -1) {
+                return { error: { day: d, group, activity } };
+            }
+
+            busyRooms.add(`${activity.roomId}:${slotIndex}`);
+            busyTeachers.add(`${activity.teacherId}:${slotIndex}`);
+
+            slots.push({
+                groupId: group.id,
+                activityId: activity.id,
+                teacherId: activity.teacherId,
+                roomId: activity.roomId,
+                dayOfWeek: d,
+                startTime: SCHEDULE_SLOT_TIMES[slotIndex],
+                durationMin: LESSON_DURATION_MIN
+            });
+        }
+    }
+
+    return { slots };
+}
+
+// Скільки занять у день d припадає на зал і на викладача дисципліни (для тексту помилки)
+function countDayLoad(groups, activities, day, activity) {
+    let room = 0;
+    let teacher = 0;
+    for (let i = 0; i < groups.length; i++) {
+        const other = activities[(i + day) % SCHEDULE_ACTIVITIES_COUNT];
+        if (other.roomId === activity.roomId) room++;
+        if (other.teacherId === activity.teacherId) teacher++;
+    }
+    return { room, teacher };
+}
+
 function generateScheduleLogic() {
     const groups = db.prepare('SELECT * FROM groups ORDER BY ageCategory DESC, id').all();
-    const activities = db.prepare('SELECT * FROM activities ORDER BY id ASC LIMIT 5').all();
+    const activities = db.prepare(`
+        SELECT a.*, r.name AS roomName, e.fullName AS teacherName
+        FROM activities a
+        LEFT JOIN rooms r ON r.id = a.roomId
+        LEFT JOIN employees e ON e.id = a.teacherId
+        ORDER BY a.id ASC
+        LIMIT ${SCHEDULE_ACTIVITIES_COUNT}
+    `).all();
 
-    if (activities.length < 5) {
+    if (activities.length < SCHEDULE_ACTIVITIES_COUNT) {
         throw new Error('Для генерації розкладу необхідно мінімум 5 профільних дисциплін у базі.');
     }
 
@@ -1703,33 +1772,34 @@ function generateScheduleLogic() {
         }
     }
 
+    if (groups.length === 0) {
+        throw new Error('Немає жодної групи: розклад скласти неможливо.');
+    }
+
+    const { slots, error } = buildWeeklySchedule(groups, activities);
+
+    if (error) {
+        const { day, group, activity } = error;
+        const load = countDayLoad(groups, activities, day, activity);
+        const perDay = SCHEDULE_SLOT_TIMES.length;
+        throw new Error(
+            `Не вистачає слотів 09:30–12:00: ${SCHEDULE_DAY_NAMES[day]}, група "${group.name}", дисципліна "${activity.name}". ` +
+            `У залі "${activity.roomName}" цього дня ${load.room} занять, у викладача "${activity.teacherName}" — ${load.teacher}, ` +
+            `а за день вміщується ${perDay}. Для ${groups.length} груп потрібно щонайменше ` +
+            `${Math.ceil(groups.length / perDay)} спеціалізованих залів і викладачів, рівномірно розподілених між дисциплінами.`
+        );
+    }
+
     const insertSlot = db.prepare(`
         INSERT INTO schedule_slots (groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
+    // Старий розклад видаляється лише тоді, коли новий повністю розставлено
     const generate = db.transaction(() => {
         db.prepare('DELETE FROM schedule_slots').run();
-        const numActivities = 5;
-
-        for (let d = 0; d < 5; d++) {
-            for (let i = 0; i < groups.length; i++) {
-                const group = groups[i];
-                const activityIndex = (i + d) % numActivities;
-                const activity = activities[activityIndex];
-
-                const slotIndex = Math.floor(i / numActivities);
-                const totalMinutes = 9 * 60 + 30 + (slotIndex * 30);
-
-                const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
-                const mm = (totalMinutes % 60).toString().padStart(2, '0');
-                const startTime = `${hh}:${mm}`;
-
-                insertSlot.run(
-                    group.id, activity.id, activity.teacherId,
-                    activity.roomId, d, startTime, 30
-                );
-            }
+        for (const s of slots) {
+            insertSlot.run(s.groupId, s.activityId, s.teacherId, s.roomId, s.dayOfWeek, s.startTime, s.durationMin);
         }
     });
 
@@ -1743,7 +1813,7 @@ const SLOT_FIELDS_INVALID = 'Недійсний час або день тижн�
 const slotFieldError = (issue) => (issue.input === undefined ? SLOT_FIELDS_MISSING : SLOT_FIELDS_INVALID);
 
 const moveSlotBody = z.object({
-    startTime: z.enum(['09:30', '10:00', '10:30', '11:00', '11:30', '12:00'], { error: slotFieldError }),
+    startTime: z.enum(SCHEDULE_SLOT_TIMES, { error: slotFieldError }),
     dayOfWeek: z.number({ error: slotFieldError }).int({ error: slotFieldError })
         .min(0, { error: slotFieldError }).max(4, { error: slotFieldError })
 }, SLOT_FIELDS_MISSING);
