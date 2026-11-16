@@ -225,3 +225,24 @@ test('один викладач на всі дисципліни для 8 гру
     assert.match(res.body.error, /Викладач 1/);
     assert.doesNotMatch(res.body.error, /UNIQUE|SQLITE/);
 });
+
+test('11 груп: 2 залів не вистачає (409 радить 3, як прогноз), 3 зали дають розклад', async () => {
+    for (const [name, ageCategory] of [['Г5-в', 5], ['Г3-в', 3], ['Г2-в', 2]]) {
+        groups.push(await created('POST', '/groups', { name, ageCategory }));
+    }
+    assert.equal(groups.length, 11);
+
+    const forecast = await api('GET', '/admin/forecast?children=220&groupSize=20');
+    assert.equal(forecast.body.optimization.minSpecializedRooms, 3);
+
+    // ceil(11 / 6) = 2, але за формулою ТЗ у 2 зали 11 груп не вміщуються за жодного розподілу
+    await assign([0, 1, 2, 3, 4], [0, 0, 0, 1, 1]);
+    const tooFew = await api('POST', '/schedules/generate');
+    assert.equal(tooFew.status, 409);
+    assert.match(tooFew.body.error, /щонайменше 3 спеціалізованих залів/);
+
+    await assign([0, 1, 2, 3, 4], [0, 0, 1, 1, 2]);
+    const res = await api('POST', '/schedules/generate');
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assertValidSchedule(scheduleRows());
+});

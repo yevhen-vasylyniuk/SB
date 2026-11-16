@@ -1786,7 +1786,7 @@ function generateScheduleLogic() {
             `Не вистачає слотів 09:30–12:00: ${SCHEDULE_DAY_NAMES[day]}, група "${group.name}", дисципліна "${activity.name}". ` +
             `У залі "${activity.roomName}" цього дня ${load.room} занять, у викладача "${activity.teacherName}" — ${load.teacher}, ` +
             `а за день вміщується ${perDay}. Для ${groups.length} груп потрібно щонайменше ` +
-            `${Math.ceil(groups.length / perDay)} спеціалізованих залів і викладачів, рівномірно розподілених між дисциплінами.`
+            `${calcMinSpecializedRooms(groups.length)} спеціалізованих залів (і стільки ж викладачів), правильно розподілених між дисциплінами.`
         );
     }
 
@@ -1890,11 +1890,40 @@ const FORECAST_MAX_CHILDREN = 600;
 // Сітка занять 09:30-12:00: 6 слотів по 30 хв на день в одному кабінеті.
 const LESSON_SLOTS_PER_DAY = 6;
 
-// Мінімум спеціалізованих кабінетів: кожна група має 1 заняття на день, тобто
-// щодня проходить стільки занять, скільки груп, а один кабінет вміщує 6 занять.
-// Дисципліни при цьому ділять кабінети (у різних слотах).
+// Усі способи розбити 5 дисциплін на групи (52 розбиття): яка дисципліна в якому залі
+function partitionActivities(count) {
+    if (count === 0) return [[]];
+    const result = [];
+    for (const partition of partitionActivities(count - 1)) {
+        partition.forEach((_, b) => {
+            result.push(partition.map((block, k) => (k === b ? [...block, count - 1] : block)));
+        });
+        result.push([...partition, [count - 1]]);
+    }
+    return result;
+}
+
+const ACTIVITY_PARTITIONS = partitionActivities(SCHEDULE_ACTIVITIES_COUNT)
+    .sort((a, b) => a.length - b.length);
+
+// Мінімум спеціалізованих кабінетів за тими ж правилами, що й генератор розкладу:
+// предмет групи i у день d — (i + d) mod 5, дисципліна закріплена за одним залом,
+// і в залі за день не більше 6 занять. Оскільки кількість занять кожної дисципліни
+// щодня різна, це не завжди ceil(груп / 6): для 11-12 груп потрібно 3 зали, для 16-24 — 5.
 function calcMinSpecializedRooms(groups) {
-    return Math.max(1, Math.ceil(groups / LESSON_SLOTS_PER_DAY));
+    const dailyLoads = [];
+    for (let d = 0; d < SCHEDULE_DAY_NAMES.length; d++) {
+        const load = new Array(SCHEDULE_ACTIVITIES_COUNT).fill(0);
+        for (let i = 0; i < groups; i++) load[(i + d) % SCHEDULE_ACTIVITIES_COUNT]++;
+        dailyLoads.push(load);
+    }
+
+    const fits = (partition) => dailyLoads.every((load) =>
+        partition.every((block) => block.reduce((sum, a) => sum + load[a], 0) <= LESSON_SLOTS_PER_DAY)
+    );
+
+    const best = ACTIVITY_PARTITIONS.find(fits);
+    return best ? best.length : SCHEDULE_ACTIVITIES_COUNT;
 }
 
 // Чистий прибуток для заданої кількості повних груп з мінімумом спеціалізованих кабінетів.
