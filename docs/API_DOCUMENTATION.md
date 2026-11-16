@@ -403,7 +403,7 @@ curl -X POST http://localhost:3000/children \
 ## 7. Тестування
 
 - **Автотести:** `npm test`. Кожен тест піднімає сервер на тимчасовій БД через `DB_PATH`.
-- **Postman:** колекція `Kindergarten_API_QA_postman_collection_full.json` (18 розділів) і оточення `kindergarten_qa_local.postman_environment.json`. Запускати Collection Runner по порядку, на чистій БД, з локально вписаним `adminPassword`. Результат останнього звітного прогону: `QA_REPORT.md`.
+- **Postman:** `postman_test4/Kindergarten_API_QA_postman_collection_full.json` (19 розділів, 00–18) і оточення `postman_test4/kindergarten_qa_local.postman_environment.json`. Запускати Collection Runner по порядку, на чистій БД, з локально вписаним `adminPassword`. Результат останнього звітного прогону: `QA_REPORT.md`.
 
 ## 8. Обмеження та відомі особливості
 
