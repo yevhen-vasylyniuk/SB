@@ -237,6 +237,9 @@
 - [ ] **AC-9.2.5** Без `children`, `children > 600`, `age = 6`, `discountPercent = 15`, `paymentPlan = weekly`, `groupSize = 21`: `400`.
 - [ ] **AC-9.2.6** Потреба понад 30 груп (600 дітей по 10): `400`.
 - [ ] **AC-9.2.7** Запит не змінює базу даних.
+- [ ] **AC-9.2.8** 150 дітей по 20: `optimization.minSpecializedRooms = 2`, `minTotalRooms = 10`, `netProfitWithMinRooms = 686 000`.
+- [ ] **AC-9.2.9** Межі мінімуму кабінетів: 6 груп — 1 кабінет, 7 груп — 2, 30 груп — 5.
+- [ ] **AC-9.2.10** `optimization.breakEvenRooms` для груп по 20, `monthly`, без пільг: 3 групи, 60 дітей, 4 кімнати, `netProfit = 96 000`; якщо окупності немає (група з 1 дитини, 30% `yearly`), `null`.
 
 ---
 
