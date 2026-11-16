@@ -427,7 +427,7 @@ npm run db:reset
 2. Усі інші запити з заголовком `Authorization: Bearer <токен>`.
 3. Створіть батька, групу, дитину, перевірте `GET /children/:id/invoice` і порівняйте суму з таблицею знижок у розділі 4.
 
-Повна перевірка: імпортувати в Postman обидва файли з `postman_test3/`, вписати свій `ADMIN_PASSWORD` у змінну `adminPassword` оточення і запустити колекцію через Collection Runner по порядку, на чистій базі.
+Повна перевірка: імпортувати в Postman обидва файли з `postman_test4/`, вписати свій `ADMIN_PASSWORD` у змінну `adminPassword` оточення і запустити колекцію через Collection Runner по порядку, на чистій базі.
 
 ### Автотести
 ```bash
