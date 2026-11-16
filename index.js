@@ -2228,6 +2228,13 @@ app.get('/employees/:id', authenticate, requireRole('admin', 'manager'), validat
 app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({ body: createEmployeeBody }), (req, res) => {
     const { fullName, position, salaryRate } = req.valid.body;
 
+    // Базові ставки зарплат встановлює лише admin (ТЗ, розділ 2)
+    if (req.user.role === 'manager' && Object.hasOwn(req.body, 'salaryRate')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може встановлювати ставку зарплати'
+        });
+    }
+
     const relationError = validateEmployeeRelations(null, position);
 
     if (relationError) {
@@ -2254,6 +2261,13 @@ app.post('/employees', authenticate, requireRole('admin', 'manager'), validate({
 app.patch('/employees/:id', authenticate, requireRole('admin', 'manager'), validate({ params: idParams('працівника'), body: updateEmployeeBody }), (req, res) => {
     const { id } = req.valid.params;
     const data = req.valid.body;
+
+    // Базові ставки зарплат змінює лише admin (ТЗ, розділ 2)
+    if (req.user.role === 'manager' && Object.hasOwn(req.body, 'salaryRate')) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+            error: 'Менеджер не може змінювати ставку зарплати'
+        });
+    }
 
     const employee = db.prepare(
         'SELECT * FROM employees WHERE id = ?'
