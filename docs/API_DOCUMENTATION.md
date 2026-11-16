@@ -342,6 +342,16 @@ Authorization: Bearer <token>
 
 Відповідь: `input`, `groups { count, minSize, maxSize }`, `teachers`, `rooms { base, specialized, total }`, `income`, `expenses { rent, manager, teachers, educators, assistants, total }`, `netProfit`, `breakEvenChildren`, `comparison` (групи по 12 і по 20). Контроль: 150 дітей по 20 дають 8 груп (6 по 19 і 2 по 18).
 
+`optimization` — оптимізація кімнат:
+- `lessonsPerDay`: занять на день (кожна група має 1 заняття, тож дорівнює кількості груп);
+- `lessonSlotsPerRoom`: 6 (сітка 09:30–12:00 по 30 хв);
+- `minSpecializedRooms`: мінімум спеціалізованих кабінетів, `ceil(груп / 6)`, але не менше 1. Дисципліни ділять кабінети в різних слотах;
+- `minTotalRooms`: базові кімнати + мінімум кабінетів;
+- `netProfitWithMinRooms`: прибуток, якщо орендувати лише мінімум кабінетів;
+- `breakEvenRooms`: мінімальна окупна кількість кімнат — найменша кількість повних груп (`groupSize` дітей) з мінімумом кабінетів, за якої `netProfit ≥ 0`: `{ groups, children, baseRooms, specializedRooms, totalRooms, netProfit }`; `null`, якщо окупності немає навіть за 30 груп.
+
+Контроль: 150 дітей по 20 дають `minSpecializedRooms = 2` (замість 5), `netProfitWithMinRooms = 686 000`; `breakEvenRooms` = 3 групи, 60 дітей, 4 кімнати (3 базові + 1 кабінет), `netProfit = 96 000`.
+
 ### 5.12. Журнал змін
 
 Записи створюють лише тригери SQLite; через API таблиця `data_history` не змінюється.

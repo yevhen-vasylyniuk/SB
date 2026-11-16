@@ -1817,6 +1817,53 @@ function calcKindergartenProfit() {
 const FORECAST_MAX_GROUPS = 30;
 const FORECAST_MAX_CHILDREN = 600;
 
+// Сітка занять 09:30-12:00: 6 слотів по 30 хв на день в одному кабінеті.
+const LESSON_SLOTS_PER_DAY = 6;
+
+// Мінімум спеціалізованих кабінетів: кожна група має 1 заняття на день, тобто
+// щодня проходить стільки занять, скільки груп, а один кабінет вміщує 6 занять.
+// Дисципліни при цьому ділять кабінети (у різних слотах).
+function calcMinSpecializedRooms(groups) {
+    return Math.max(1, Math.ceil(groups / LESSON_SLOTS_PER_DAY));
+}
+
+// Чистий прибуток для заданої кількості повних груп з мінімумом спеціалізованих кабінетів.
+function calcForecastForGroups(groups, { groupSize, discountPercent, paymentPlan, disciplines }) {
+    const children = groups * groupSize;
+    const specializedRooms = calcMinSpecializedRooms(groups);
+    const tuitionPerChild = calcTuition({ discountPercent, paymentPlan }).perMonth;
+
+    const income = children * tuitionPerChild;
+    const expenses = (groups + specializedRooms) * CONFIG.ROOM_RENT
+        + CONFIG.MANAGER_SALARY
+        + disciplines * CONFIG.TEACHER_SALARY
+        + groups * (calcEducatorSalary(groupSize) + calcAssistantSalary(groupSize));
+
+    return {
+        groups,
+        children,
+        baseRooms: groups,
+        specializedRooms,
+        totalRooms: groups + specializedRooms,
+        netProfit: income - expenses
+    };
+}
+
+// Мінімальна окупна кількість кімнат: найменша кількість кімнат (базові + мінімум
+// спеціалізованих), за якої садок з повними групами виходить у плюс. null, якщо
+// окупності немає навіть за максимуму груп.
+function calcBreakEvenRooms(options) {
+    for (let groups = 1; groups <= FORECAST_MAX_GROUPS; groups++) {
+        const result = calcForecastForGroups(groups, options);
+
+        if (result.netProfit >= 0) {
+            return result;
+        }
+    }
+
+    return null;
+}
+
 function calcForecast({ children, age, groupSize, discountPercent, paymentPlan, disciplines }) {
     const groups = Math.ceil(children / groupSize);
 
@@ -3772,7 +3819,21 @@ app.get('/admin/forecast', authenticate, requireRole('admin'), validate({ query:
             : { groupSize: size, groups: result.groups.count, rooms: result.rooms.total, netProfit: result.netProfit };
     });
 
-    return res.status(HTTP_STATUS.OK).json({ ...forecast, breakEvenChildren, comparison });
+    // Оптимізація кімнат: мінімум спеціалізованих кабінетів для цього прогнозу
+    // і мінімальна кількість кімнат, за якої садок окупається.
+    const minSpecialized = calcMinSpecializedRooms(forecast.groups.count);
+    const savedRent = (forecast.rooms.specialized - minSpecialized) * CONFIG.ROOM_RENT;
+
+    const optimization = {
+        lessonsPerDay: forecast.groups.count,
+        lessonSlotsPerRoom: LESSON_SLOTS_PER_DAY,
+        minSpecializedRooms: minSpecialized,
+        minTotalRooms: forecast.rooms.base + minSpecialized,
+        netProfitWithMinRooms: forecast.netProfit + savedRent,
+        breakEvenRooms: calcBreakEvenRooms(options)
+    };
+
+    return res.status(HTTP_STATUS.OK).json({ ...forecast, breakEvenChildren, comparison, optimization });
 });
 
 
