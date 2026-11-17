@@ -1,0 +1,808 @@
+{
+  "info": {
+    "_postman_id": "df844fe5-487a-4711-b6b7-54a22a9a873c",
+    "name": "SB - History API QA (Runner Ready)",
+    "description": "Автоматизовані перевірки локального SB API: логін адміністратора → створення кімнати → INSERT у /history → зміна кімнати → UPDATE у /history → видалення кімнати → DELETE у /history → фільтри → 401 без токена → створення тестового менеджера → його логін → 403 для менеджера.\n\nДля Collection Runner: запустіть SB API на окремій disposable/test SQLite БД, не на командній робочій БД; оберіть середовище з секретними adminPassword та managerPassword (>=12 символів). adminToken і managerToken встановлюються скриптами після входу. Колекція не містить значень паролів чи токенів.\n\nroomId зберігається автоматично після POST /rooms, roomName і updatedRoomName генеруються для кожного проходу. managerLogin генерується окремо на кожний прохід, тому повторний запуск не конфліктує з попереднім менеджером, але залишає тестові акаунти в БД.\n\nЗапускайте всю колекцію в порядку зверху вниз, не вручну врозкид. Тестування на реальному сервері й окремій БД має виконати користувач у Postman Collection Runner; JSON-файл не містить фактичних результатів такого запуску.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "60118170"
+  },
+  "item": [
+    {
+      "name": "Auth - Login Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Адміністратор успішно увійшов\", function () {\r\n    pm.response.to.have.status(200);\r\n});\r\n\r\nif (pm.response.code === 200) {\r\n    const data = pm.response.json();\r\n    pm.environment.set(\"adminToken\", data.token);\r\n}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"login\": \"admin\",\r\n  \"password\": \"{{adminPassword}}\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/auth/login",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "auth",
+            "login"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Rooms - INSERT",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"{{roomName}}\",\n  \"type\": \"base\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/rooms",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "rooms"
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Нова назва для кожного запуску; не залежимо від того, чи попередній запуск завершився.",
+              "const suffix = Date.now().toString(36) + \"_\" + Math.random().toString(36).slice(2, 10);",
+              "const roomName = \"QA Test Room \" + suffix;",
+              "pm.collectionVariables.unset(\"roomId\");",
+              "pm.collectionVariables.set(\"roomName\", roomName);",
+              "pm.collectionVariables.set(\"updatedRoomName\", roomName + \" Updated\");"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Створення кімнати повертає 201 Created\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Створена кімната має ID і правильні поля\", function () {",
+              "    const data = pm.response.json();",
+              "    pm.expect(data.id).to.exist;",
+              "    pm.expect(String(data.id)).to.match(/^\\d+$/);",
+              "    pm.expect(data.name).to.eql(pm.collectionVariables.get(\"roomName\"));",
+              "    pm.expect(data.type).to.eql(\"base\");",
+              "    pm.expect(data.rent).to.eql(50000);",
+              "});",
+              "",
+              "if (pm.response.code === 201) {",
+              "    const data = pm.response.json();",
+              "    if (data.id !== undefined && data.id !== null) {",
+              "        pm.collectionVariables.set(\"roomId\", String(data.id));",
+              "    }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - INSERT (200 Admin)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Адміністратор отримує 200 і масив історії\", function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json()).to.be.an(\"array\");",
+              "});",
+              "",
+              "pm.test(\"INSERT збережено для щойно створеної кімнати\", function () {",
+              "    const history = pm.response.json();",
+              "    const roomId = pm.collectionVariables.get(\"roomId\");",
+              "    const inserted = history.find(item =>",
+              "        item.tableName === \"rooms\" &&",
+              "        String(item.recordId) === roomId &&",
+              "        item.action === \"INSERT\"",
+              "    );",
+              "    pm.expect(inserted).to.exist;",
+              "    pm.expect(inserted.oldData).to.be.null;",
+              "    pm.expect(inserted.newData.name).to.eql(pm.collectionVariables.get(\"roomName\"));",
+              "    pm.expect(inserted.newData.rent).to.eql(50000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/history?tableName=rooms&recordId={{roomId}}&action=INSERT",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ],
+          "query": [
+            {
+              "key": "tableName",
+              "value": "rooms"
+            },
+            {
+              "key": "recordId",
+              "value": "{{roomId}}"
+            },
+            {
+              "key": "action",
+              "value": "INSERT"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Rooms - UPDATE",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "PATCH",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"{{updatedRoomName}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/rooms/{{roomId}}",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "rooms",
+            "{{roomId}}"
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Оновлення кімнати повертає 200 OK\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Назва змінилася, ID і оренда збереглися\", function () {",
+              "    const data = pm.response.json();",
+              "    pm.expect(String(data.id)).to.eql(pm.collectionVariables.get(\"roomId\"));",
+              "    pm.expect(data.name).to.eql(pm.collectionVariables.get(\"updatedRoomName\"));",
+              "    pm.expect(data.rent).to.eql(50000);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - UPDATE",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Адміністратор отримує 200 на UPDATE-історію\", function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json()).to.be.an(\"array\");",
+              "});",
+              "",
+              "pm.test(\"UPDATE містить стару і нову назву та незмінну оренду\", function () {",
+              "    const history = pm.response.json();",
+              "    const roomId = pm.collectionVariables.get(\"roomId\");",
+              "    const update = history.find(item =>",
+              "        item.tableName === \"rooms\" &&",
+              "        String(item.recordId) === roomId &&",
+              "        item.action === \"UPDATE\" &&",
+              "        item.oldData?.name === pm.collectionVariables.get(\"roomName\") &&",
+              "        item.newData?.name === pm.collectionVariables.get(\"updatedRoomName\")",
+              "    );",
+              "    pm.expect(update).to.exist;",
+              "    pm.expect(update.oldData.rent).to.eql(50000);",
+              "    pm.expect(update.newData.rent).to.eql(50000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/history?tableName=rooms&recordId={{roomId}}&action=UPDATE",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ],
+          "query": [
+            {
+              "key": "tableName",
+              "value": "rooms"
+            },
+            {
+              "key": "recordId",
+              "value": "{{roomId}}"
+            },
+            {
+              "key": "action",
+              "value": "UPDATE"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Rooms - DELETE",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/rooms/{{roomId}}",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "rooms",
+            "{{roomId}}"
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Видалення кімнати повертає 204 No Content\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});",
+              "",
+              "pm.test(\"Успішне видалення не повертає тіло\", function () {",
+              "    pm.expect(pm.response.text()).to.eql(\"\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - DELETE",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Адміністратор отримує 200 на DELETE-історію\", function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json()).to.be.an(\"array\");",
+              "});",
+              "",
+              "pm.test(\"DELETE зберігає попередній стан кімнати\", function () {",
+              "    const history = pm.response.json();",
+              "    const roomId = pm.collectionVariables.get(\"roomId\");",
+              "    const deleted = history.find(item =>",
+              "        item.tableName === \"rooms\" &&",
+              "        String(item.recordId) === roomId &&",
+              "        item.action === \"DELETE\"",
+              "    );",
+              "    pm.expect(deleted).to.exist;",
+              "    pm.expect(deleted.oldData.name).to.eql(pm.collectionVariables.get(\"updatedRoomName\"));",
+              "    pm.expect(deleted.oldData.rent).to.eql(50000);",
+              "    pm.expect(deleted.newData).to.be.null;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/history?tableName=rooms&recordId={{roomId}}&action=DELETE",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ],
+          "query": [
+            {
+              "key": "tableName",
+              "value": "rooms"
+            },
+            {
+              "key": "recordId",
+              "value": "{{roomId}}"
+            },
+            {
+              "key": "action",
+              "value": "DELETE"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "History - Filter Table",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Фільтрація історії за таблицею rooms\", function () {\r\n    pm.response.to.have.status(200);\r\n\r\n    const history = pm.response.json();\r\n\r\n    pm.expect(history).to.be.an(\"array\");\r\n    pm.expect(history.length).to.be.above(0);\r\n\r\n    history.forEach(item => {\r\n        pm.expect(item.tableName).to.eql(\"rooms\");\r\n    });\r\n});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/history?tableName=rooms",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ],
+          "query": [
+            {
+              "key": "tableName",
+              "value": "rooms"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "History - Filter Record ID",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Фільтрація історії за ID кімнати\", function () {",
+              "    pm.response.to.have.status(200);",
+              "    const history = pm.response.json();",
+              "    pm.expect(history).to.be.an(\"array\");",
+              "    pm.expect(history.length).to.be.at.least(3);",
+              "    const roomId = pm.collectionVariables.get(\"roomId\");",
+              "    history.forEach(item => {",
+              "        pm.expect(item.tableName).to.eql(\"rooms\");",
+              "        pm.expect(String(item.recordId)).to.eql(roomId);",
+              "    });",
+              "    [\"INSERT\", \"UPDATE\", \"DELETE\"].forEach(action => {",
+              "        pm.expect(history.some(item => item.action === action)).to.be.true;",
+              "    });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/history?tableName=rooms&recordId={{roomId}}",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ],
+          "query": [
+            {
+              "key": "tableName",
+              "value": "rooms"
+            },
+            {
+              "key": "recordId",
+              "value": "{{roomId}}"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "History - 401 Unauthorized",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Без авторизації повертається 401\", function () {\r\n    pm.response.to.have.status(401);\r\n});\r\n\r\npm.test(\"Сервер вимагає авторизацію\", function () {\r\n    const data = pm.response.json();\r\n    pm.expect(data.error).to.eql(\"Потрібна авторизація\");\r\n});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/history",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Users - Create Manager",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"login\": \"{{managerLogin}}\",\n  \"password\": \"{{managerPassword}}\",\n  \"role\": \"manager\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/users",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "users"
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Щоразу новий тестовий логін, тому другий запуск не отримує 409 через дубль.",
+              "const suffix = Date.now().toString(36) + \"_\" + Math.random().toString(36).slice(2, 10);",
+              "pm.collectionVariables.set(\"managerLogin\", \"qa_manager_\" + suffix);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Створення тестового менеджера повертає 201 Created\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Створений користувач має роль manager та новий логін\", function () {",
+              "    const data = pm.response.json();",
+              "    pm.expect(data.id).to.exist;",
+              "    pm.expect(data.login).to.eql(pm.collectionVariables.get(\"managerLogin\"));",
+              "    pm.expect(data.role).to.eql(\"manager\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth - Login Manager",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Менеджер успішно авторизувався (200)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "    const data = pm.response.json();",
+              "    pm.expect(data.user.role).to.eql(\"manager\");",
+              "    pm.expect(data.user.login).to.eql(pm.collectionVariables.get(\"managerLogin\"));",
+              "});",
+              "",
+              "if (pm.response.code === 200) {",
+              "    const data = pm.response.json();",
+              "    pm.environment.set(\"managerToken\", data.token);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"login\": \"{{managerLogin}}\",\n  \"password\": \"{{managerPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/auth/login",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "auth",
+            "login"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "History - 403 Manager",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Менеджер отримує 403 Forbidden\", function () {\r\n    pm.response.to.have.status(403);\r\n});\r\n\r\npm.test(\"Менеджеру заборонено доступ до історії\", function () {\r\n    const data = pm.response.json();\r\n    pm.expect(data.error).to.eql(\"Недостатньо прав доступу\");\r\n});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{managerToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/history",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "history"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "roomId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "roomName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "updatedRoomName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "managerLogin",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

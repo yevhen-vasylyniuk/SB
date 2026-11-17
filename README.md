@@ -160,6 +160,8 @@
 2. Дисципліни мають фіксований порядок (за `id`). Для групи з індексом `i` (`0 ≤ i < N`) у день `d` (0 = Пн, … 4 = Пт) предмет визначається формулою:
    $$\text{activityIndex} = (i + d) \bmod 5$$
 3. Групи з однаковим предметом у той самий день отримують послідовні слоти по 30 хвилин, починаючи з 09:30, за спаданням віку (старші йдуть першими).
+4. Кожне заняття стає в найперший слот від 09:30, де вільні група, викладач і зал. Коли в кожної дисципліни свій зал і викладач, це дає саме пункт 3. Кілька дисциплін можуть ділити спеціалізований зал або викладача: тоді заняття в ньому йдуть одне за одним, і, наприклад, 8 груп вміщуються у 2 зали. Прогноз (етап 4, пункт 14) рахує мінімум залів за цими ж правилами, тому числа збігаються (11–12 груп потребують 3 зали, 16–24 групи 5, а не `ceil(груп / 6)`).
+5. Якщо заняття не вміщується в 6 слотів 09:30–12:00, немає груп або дисциплін без викладача чи залу, відповідь `409` з поясненням, а старий розклад лишається без змін.
 
 ---
 
@@ -216,21 +218,24 @@
 
 ## 8. Модель даних (таблиці SQLite)
 
-| Таблиця | Колонки                                                                                   | Обмеження                                                                                                                                                                                                                                                                                                                             |
-| --- |-------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `users` | id, login, passwordHash, role, parentId, employeeId                                       | `login` унікальний; `role` одна з `admin`, `manager`, `parent`, `teacher`                                                                                                                                                                                                                                                             |
-| `parents` | id, fullName, phone, email, relationNote                                                  | `relationNote` довільний рядок («родич адміна», «депутат», «знайомий»)                                                                                                                                                                                                                                                                |
-| `children` | id, fullName, birthDate, parentId, groupId, discountPercent, paymentPlan, notes, isActive | `discountPercent` у 0, 10, 20, 30; `paymentPlan` у `monthly`, `yearly`; `isActive` за замовчуванням 1                                                                                                                                                                                                                                 |
-| `child_parents` | childId, parentId | первинний ключ (childId, parentId); додаткові опікуни дитини, основний батько теж має тут запис; `children.parentId` лишається обов'язковим |
-| `groups` | id, name, ageCategory, capacity, roomId, educatorId, assistantId                          | `ageCategory` від 2 до 5; `roomId` унікальний (одна кімната на одну групу); `capacity` від 1 до 20, за замовчуванням 20                                                                                                                                                                                                               |
-| `rooms` | id, name, type, rent                                                                      | `type` у `base`, `specialized`; `rent` за замовчуванням 50000                                                                                                                                                                                                                                                                         |
-| `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем |
-| `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                              |
-| `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                              |
+| Таблиця | Колонки                                                                                   | Обмеження                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --- |-------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `users` | id, login, passwordHash, role, parentId, employeeId                                       | `login` унікальний; `role` одна з `admin`, `manager`, `parent`, `teacher`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `parents` | id, fullName, phone, email, relationNote                                                  | `relationNote` довільний рядок («родич адміна», «депутат», «знайомий»)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `children` | id, fullName, birthDate, parentId, groupId, discountPercent, paymentPlan, notes, isActive | `discountPercent` у 0, 10, 20, 30; `paymentPlan` у `monthly`, `yearly`; `isActive` за замовчуванням 1                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `child_parents` | childId, parentId | первинний ключ (childId, parentId); додаткові опікуни дитини, основний батько теж має тут запис; `children.parentId` лишається обов'язковим                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `groups` | id, name, ageCategory, capacity, roomId, educatorId, assistantId                          | `ageCategory` від 2 до 5; `roomId` унікальний (одна кімната на одну групу); `capacity` від 1 до 20, за замовчуванням 20                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `rooms` | id, name, type, rent                                                                      | `type` у `base`, `specialized`; `rent` за замовчуванням 50000                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `employees` | id, fullName, position, salaryRate                                                        | `position` у `manager`, `educator`, `assistant`, `teacher`; `salaryRate` може бути `NULL` (за замовчуванням `NULL`): для `educator` і `assistant` зарплата рахується динамічно від кількості дітей у групі, для `manager` і `teacher` використовуються ставки з `CONFIG` (80 000 і 40 000), а `salaryRate` лишається довідковим полем                                                                                                                                                                                                                             |
+| `activities` | id, name, teacherId, roomId                                                               | `name` унікальна; `roomId` вказує на спеціалізований зал                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `schedule_slots` | id, groupId, activityId, teacherId, roomId, dayOfWeek, startTime, durationMin             | `dayOfWeek` від 0 до 4; унікальність пар (група, день, час), (викладач, день, час), (кімната, день, час)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `data_history` | id, tableName, recordId, action, oldData, newData, changedAt | `recordId` текстовий, щоб підходили складені ключі (для `child_parents` формат `'childId:parentId'`); `action` у `INSERT`, `UPDATE`, `DELETE`; `oldData` і `newData` зберігають повний стан запису у JSON, включно з `id` (`NULL` для відсутнього стану); `changedAt` заповнюється автоматично. Записи додають лише тригери, через API таблиця не змінюється. Ведеться для `rooms`, `children`, `child_parents`, `parents`, `employees`, `groups`, `activities`, `schedule_slots` та `users` (тригери `*_history_insert`, `*_history_update`, `*_history_delete`) |
 
 Оренда для розрахунку: `SUM(rent)` по таблиці `rooms`. Поки значення не змінювали, вона дорівнює 50 000 × кількість кімнат.
 
 Початкові дані (seed) при першому запуску: користувач `admin`, 5 дисциплін (музика, англійська, фізкультура, вільна боротьба, шахи). Решту даних (діти, групи, викладачі) заводять через API.
+
+Історія змін (`data_history`): тригери `AFTER INSERT/UPDATE/DELETE` записують, що змінилось у таблиці. `UPDATE` без фактичних змін не записується, а невдала зміна (помилка валідації чи `409`) не залишає запису. Наразі тригери реалізовано для `rooms`, `children`, `child_parents`, `parents`, `employees`, `groups`, `activities`, `schedule_slots` та `users`. Початкові дисципліни з seed теж потрапляють в історію як `INSERT`, а повторна генерація розкладу записує `DELETE` для старих слотів і `INSERT` для нових. Автотести знаходяться в папці `test/`.
 
 ## 9. Зведена таблиця ендпойнтів
 
@@ -248,6 +253,7 @@
 | `PATCH /children/:id` | Змінити дані, пільгу, план, `isActive`, групу | A, M; P лише `notes` своєї | 200, 400, 403, 404, 409 |
 | `DELETE /children/:id` | Видалити дитину | A | 204, 403, 404 |
 | `/parents`, `/rooms`, `/employees`, `/activities` | Стандартний CRUD (`GET`, `POST`, `PATCH`, `DELETE`) | A, M; `DELETE` лише A | 200, 201, 204, 400, 403, 404, 409 |
+| `GET /activities?name=`, `GET`/`PATCH`/`DELETE /activities/by-name/:name` | Пошук за частиною назви та операції з дисципліною за точною назвою (маршрути за `id` лишаються); `DELETE` лише A | A, M | 200, 204, 400, 403, 404, 409 |
 | `/groups` | Стандартний CRUD з перевірками віку, місткості, ліміту груп | A, M; `DELETE` лише A | 200, 201, 204, 400, 403, 404, 409 |
 | `GET /groups/:id/children` | Список дітей у групі | A, M | 200, 401, 403, 404 |
 | `GET /children/:id/invoice` | Рахунок на льоту | A, M; P лише основний представник дитини (`parentId`) | 200, 403, 404, 409 |
@@ -258,6 +264,8 @@
 | `GET /groups/:id/profit` | Прибуток групи | A | 200, 403, 404 |
 | `GET /admin/profit` | Чистий прибуток садка | A | 200, 403 |
 | `GET /admin/forecast` | Прогноз прибутку (бонус) | A | 200, 400, 403 |
+| `GET /history` | Журнал змін із фільтрами `tableName`, `recordId`, `action` та пагінацією `limit` (1–100, типово 50), `offset` (типово 0); спочатку новіші записи | A | 200, 400, 401, 403 |
+| `GET /history/:id` | Отримати одну подію журналу змін за її ID | A | 200, 400, 401, 403, 404 |
 
 ## 10. Критерії готовності (Definition of Done)
 
@@ -359,6 +367,7 @@ npm run setup
 | `PORT` | ні (типово `3000`) | порт сервера |
 | `ADMIN_PASSWORD` | так, мінімум 12 символів | пароль користувача `admin`, який створюється при першому запуску |
 | `JWT_SECRET` | так, мінімум 32 символи | секрет для підпису JWT-токенів |
+| `DB_PATH` | ні (типово `kindergarten.db`) | шлях до файлу бази; використовується автотестами |
 
 Згенерувати значення вручну:
 
@@ -397,7 +406,7 @@ Server running at http://localhost:3000
 
 ### Що створюється при першому запуску
 - Файл бази `kindergarten.db` (разом з `kindergarten.db-wal` і `kindergarten.db-shm`, бо увімкнено режим WAL).
-- Дев'ять таблиць, тригери місткості груп, `foreign_keys = ON`.
+- Десять таблиць (включно з `data_history`), тригери місткості груп і тригери історії змін `rooms`, `children`, `child_parents`, `parents`, `employees`, `groups`, `activities`, `schedule_slots`, та `users` `foreign_keys = ON`.
 - Початкові дані (seed):
   - користувач `admin` з паролем з `ADMIN_PASSWORD` (у базі зберігається лише bcrypt-хеш);
   - п'ять дисциплін: Музика, Англійська, Фізкультура, Вільна боротьба, Шахи.
@@ -420,7 +429,14 @@ npm run db:reset
 2. Усі інші запити з заголовком `Authorization: Bearer <токен>`.
 3. Створіть батька, групу, дитину, перевірте `GET /children/:id/invoice` і порівняйте суму з таблицею знижок у розділі 4.
 
-Повна перевірка: імпортувати в Postman обидва файли з `postman_test3/`, вписати свій `ADMIN_PASSWORD` у змінну `adminPassword` оточення і запустити колекцію через Collection Runner по порядку, на чистій базі.
+Повна перевірка: імпортувати в Postman обидва файли з `postman_test5/`, вписати свій `ADMIN_PASSWORD` у змінну `adminPassword` оточення і запустити колекцію через Collection Runner по порядку, на чистій базі.
+
+### Автотести
+```bash
+npm test
+```
+
+Запускає тести з папки `test/` (вбудований `node:test`, без додаткових пакетів). Кожен тест піднімає сервер на тимчасовій базі через змінну `DB_PATH`, тому локальна `kindergarten.db` і `.env` не змінюються. Зараз покрито історію змін `rooms`, `children`, `child_parents`, `parents`, `employees`, `groups`, `activities`, `schedule_slots` та `users`: INSERT, UPDATE, DELETE, UPDATE без змін і невдалі операції (409, 400, 404), які не мають залишати записів. Генератор розкладу перевіряє `test/schedule_generate.test.js`: формула ТЗ, відсутність колізій, спільні зали й викладачі, `409` без груп і при нестачі слотів.
 
 ### Якщо не запускається
 | Повідомлення | Причина і що робити |
