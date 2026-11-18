@@ -105,14 +105,14 @@ test('150 дітей по 5 років: 8 груп, 2 кабінети замі�
     assert.equal(result.groups.count, 8);
     assert.deepEqual(result.rooms, { base: 8, specialized: 5, total: 13 });
     assert.equal(result.income, 2250000);
-    assert.equal(result.netProfit, 536000);
+    assert.equal(result.netProfit, 428000);
 
     // 8 занять на день, кабінет вміщує 6, тож потрібно 2 кабінети; економія 3 × 50 000
     assert.equal(result.optimization.lessonsPerDay, 8);
     assert.equal(result.optimization.lessonSlotsPerRoom, 6);
     assert.equal(result.optimization.minSpecializedRooms, 2);
     assert.equal(result.optimization.minTotalRooms, 10);
-    assert.equal(result.optimization.netProfitWithMinRooms, 686000);
+    assert.equal(result.optimization.netProfitWithMinRooms, 578000);
 });
 
 test('мінімум кабінетів: 6 груп дають 1 кабінет, 7 груп дають 2, 30 груп дають 5', async () => {
@@ -149,29 +149,39 @@ test('мінімум кабінетів як у генераторі: 11-12 гр
     }
 });
 
-test('окупна кількість кімнат: 3 повні групи по 20 і 1 кабінет, прибуток 96 000', async () => {
+test('окупна кількість кімнат: 3 повні групи по 20 і 1 кабінет, прибуток 48 000', async () => {
     const result = await forecast({ children: 150, age: 5, groupSize: 20 });
 
-    // 1 група: 300 000 - 158 000 - 280 000 - 50 000 < 0; 2 групи: -46 000; 3 групи: +96 000
+    // Група з 20 дітей коштує 174 000 (кімната 50 000 + вихователь 80 000 + помічник 44 000)
+    // 1 група: 300 000 - 174 000 - 280 000 - 50 000 < 0; 2 групи: -78 000; 3 групи: +48 000
     assert.deepEqual(result.optimization.breakEvenRooms, {
         groups: 3,
         children: 60,
         baseRooms: 3,
         specializedRooms: 1,
         totalRooms: 4,
-        netProfit: 96000,
+        netProfit: 48000,
     });
 });
 
-test('окупна кількість кімнат залежить від тарифу: 30% і yearly потребують більше груп', async () => {
-    const result = await forecast({ children: 150, groupSize: 20, discountPercent: 30, paymentPlan: 'yearly' });
+test('окупна кількість кімнат залежить від тарифу: пільга 10% потребує більше груп', async () => {
+    const result = await forecast({ children: 150, groupSize: 20, discountPercent: 10 });
     const breakEven = result.optimization.breakEvenRooms;
 
-    // Дитина приносить 9 240 на місяць: маржа групи 184 800 - 158 000 = 26 800
+    // Дитина приносить 13 500 на місяць: маржа групи 270 000 - 174 000 = 96 000
+    // 3 групи: 288 000 - 280 000 - 50 000 < 0; 4 групи: 384 000 - 280 000 - 50 000 = +54 000
     assert.ok(breakEven, 'окупність має існувати');
-    assert.ok(breakEven.groups > 3);
-    assert.ok(breakEven.netProfit >= 0);
+    assert.equal(breakEven.groups, 4);
+    assert.equal(breakEven.netProfit, 54000);
     assert.equal(breakEven.totalRooms, breakEven.baseRooms + breakEven.specializedRooms);
+});
+
+test('30% і yearly: садок з групами по 20 не окупається навіть з 30 групами', async () => {
+    const result = await forecast({ children: 150, groupSize: 20, discountPercent: 30, paymentPlan: 'yearly' });
+
+    // Дитина приносить 9 240: маржа групи 184 800 - 174 000 = 10 800,
+    // 30 груп: 324 000 - 280 000 - 5 × 50 000 < 0
+    assert.equal(result.optimization.breakEvenRooms, null);
 });
 
 test('якщо садок не окупається навіть з 30 групами, breakEvenRooms = null', async () => {

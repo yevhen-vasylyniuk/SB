@@ -129,7 +129,7 @@
 Формули:
 - `calcTuition`: `річна база = 180 000 × (100 − discountPercent) / 100`. План `monthly`: `perYear` = ця сума, `perMonth` = `perYear / 12`. План `yearly`: `perYear` = `річна база × 88 / 100`, `perMonth` = `perYear / 12`. Тобто `perMonth` це **місячний еквівалент**, саме він іде в розрахунок прибутку. Результат округлювати `Math.round`.
 - `calcMeals`: `perDay` = 300, 400, 500 або 600 за віком 2, 3, 4, 5; `perMonth` = `perDay × 20`; `perYear` = `perMonth × 12`. Пільги на харчування не діють, у прибуток садка харчування не входить.
-- `calcEducatorSalary`: `2 000 × min(n, 12) + 5 000 × max(0, n − 12)`.
+- `calcEducatorSalary`: `2 000 × n + 5 000 × max(0, n − 12)` (5 000 доплата понад 2 000 за кожну дитину з 13-ї по 20-ту).
 - `calcAssistantSalary`: `20 000 + 3 000 × max(0, n − 12)`.
 - Некоректний вхід (вік поза 2–5, `kidsCount` поза 0–20, невідомий план чи пільга): `throw new RangeError(...)`. Маршрути перевіряють дані до виклику, тому функція не повертає `NaN` і не мовчить.
 
@@ -142,7 +142,7 @@
 | `calcTuition({ discountPercent: 30, paymentPlan: 'monthly' })` | `{ perMonth: 10500, perYear: 126000 }` |
 | `calcTuition({ discountPercent: 30, paymentPlan: 'yearly' })` | `{ perMonth: 9240, perYear: 110880 }` |
 | `calcMeals(3)` | `{ perDay: 400, perMonth: 8000, perYear: 96000 }` |
-| `calcEducatorSalary(15)` / `calcEducatorSalary(20)` | 39 000 / 64 000 |
+| `calcEducatorSalary(15)` / `calcEducatorSalary(20)` | 45 000 / 80 000 |
 | `calcAssistantSalary(15)` / `calcAssistantSalary(20)` | 29 000 / 44 000 |
 | прибуток групи: 12 п'ятирічок, без пільг, `monthly` | 86 000 (180 000 − 50 000 − 24 000 − 20 000) |
 

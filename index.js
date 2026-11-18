@@ -1664,11 +1664,11 @@ function assertKidsCount(kidsCount, fnName) {
 }
 
 // calcEducatorSalary(kidsCount) -> зарплата вихователя за місяць
-// 2 000 за кожну з перших 12 дітей, 5 000 за кожну з 13-ї по 20-ту.
+// 2 000 за кожну дитину і додатково 5 000 за кожну з 13-ї по 20-ту.
 function calcEducatorSalary(kidsCount) {
     assertKidsCount(kidsCount, 'calcEducatorSalary');
 
-    const base = Math.min(kidsCount, CONFIG.SALARY_BASE_CHILDREN);
+    const base = kidsCount;
     const over = Math.max(0, kidsCount - CONFIG.SALARY_BASE_CHILDREN);
 
     return base * CONFIG.EDUCATOR_RATE_BASE + over * CONFIG.EDUCATOR_RATE_OVER;
