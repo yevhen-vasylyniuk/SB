@@ -318,7 +318,7 @@ Authorization: Bearer <token>
 **Харчування** (поза прибутком, без пільг): 2 р. 300, 3 р. 400, 4 р. 500, 5 р. 600 грн/день; місяць = день × 20.
 
 **Зарплати:**
-- вихователь: `2 000 × min(n, 12) + 5 000 × max(0, n − 12)`;
+- вихователь: `2 000 × n + 5 000 × max(0, n − 12)`;
 - помічник: `20 000 + 3 000 × max(0, n − 12)`;
 - `n` це кількість активних дітей групи (0–20).
 
@@ -350,7 +350,7 @@ Authorization: Bearer <token>
 - `netProfitWithMinRooms`: прибуток, якщо орендувати лише мінімум кабінетів;
 - `breakEvenRooms`: мінімальна окупна кількість кімнат — найменша кількість повних груп (`groupSize` дітей) з мінімумом кабінетів, за якої `netProfit ≥ 0`: `{ groups, children, baseRooms, specializedRooms, totalRooms, netProfit }`; `null`, якщо окупності немає навіть за 30 груп.
 
-Контроль: 150 дітей по 20 дають `minSpecializedRooms = 2` (замість 5), `netProfitWithMinRooms = 686 000`; `breakEvenRooms` = 3 групи, 60 дітей, 4 кімнати (3 базові + 1 кабінет), `netProfit = 96 000`.
+Контроль: 150 дітей по 20 дають `minSpecializedRooms = 2` (замість 5), `netProfitWithMinRooms = 578 000`; `breakEvenRooms` = 3 групи, 60 дітей, 4 кімнати (3 базові + 1 кабінет), `netProfit = 48 000`.
 
 ### 5.12. Журнал змін
 
